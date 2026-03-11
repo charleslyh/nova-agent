@@ -1,0 +1,29 @@
+[workspace]
+members = [
+    "apps/cli",
+    "apps/desktop/tauri",
+    "crates/robot-kit",
+    "crates/zeroclaw-types",
+    "crates/zeroclaw-core",
+]
+resolver = "2"
+
+# Shared profiles — all workspace members inherit these.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.release-fast]
+inherits = "release"
+codegen-units = 1
+
+[profile.dist]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
