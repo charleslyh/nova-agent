@@ -59,8 +59,8 @@ pub(crate) fn ensure_layout(paths: &SondaRuntimePaths) -> std::io::Result<()> {
     Ok(())
 }
 
-/// 若 `dest` 尚不存在，从 `default_src` 复制工具 manifest，返回最终路径。
-pub fn materialize_tools_catalog(dest: &Path, default_src: &Path) -> std::io::Result<PathBuf> {
+/// 若 `dest` 尚不存在，从 bundle 默认文件复制到 app data，返回最终路径。
+pub fn materialize_initial_file(dest: &Path, default_src: &Path) -> std::io::Result<PathBuf> {
     if dest.is_file() {
         return Ok(dest.to_path_buf());
     }
@@ -71,12 +71,19 @@ pub fn materialize_tools_catalog(dest: &Path, default_src: &Path) -> std::io::Re
     Ok(dest.to_path_buf())
 }
 
-/// 确保用户 skills 目录存在；若为空则从 bundled 目录种子复制（不覆盖已有项）。
-pub fn ensure_user_skills_dir(user: &Path, bundled: &Path) -> std::io::Result<PathBuf> {
+/// 若 `dest` 尚不存在，从 `default_src` 复制工具 manifest，返回最终路径。
+pub fn materialize_tools_catalog(dest: &Path, default_src: &Path) -> std::io::Result<PathBuf> {
+    materialize_initial_file(dest, default_src)
+}
+
+/// 若 `dest` 尚不存在，从 `default_src` 复制 session catalog，返回最终路径。
+pub fn materialize_sessions_catalog(dest: &Path, default_src: &Path) -> std::io::Result<PathBuf> {
+    materialize_initial_file(dest, default_src)
+}
+
+/// 确保用户 skills 目录存在（仅用于 SkillHub 安装等可写 skill；不复制 bundled skills）。
+pub fn ensure_user_skills_dir(user: &Path) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(user)?;
-    if !dir_has_skill_manifests(user) {
-        seed_skills_from_bundled(bundled, user)?;
-    }
     Ok(user.to_path_buf())
 }
 
@@ -85,58 +92,6 @@ pub fn ensure_sessions_dir(data_dir: &Path) -> std::io::Result<PathBuf> {
     let dir = data_dir.join(SESSIONS_DIR_NAME);
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
-}
-
-fn seed_skills_from_bundled(bundled: &Path, user: &Path) -> std::io::Result<()> {
-    if !bundled.is_dir() {
-        return Ok(());
-    }
-
-    for entry in std::fs::read_dir(bundled)? {
-        let entry = entry?;
-        let src = entry.path();
-        if !src.is_dir() || !path_has_skill_manifest(&src) {
-            continue;
-        }
-        let dest = user.join(entry.file_name());
-        if dest.exists() {
-            continue;
-        }
-        copy_dir_recursive(&src, &dest)?;
-    }
-    Ok(())
-}
-
-fn path_has_skill_manifest(dir: &Path) -> bool {
-    dir.join("SKILL.md").is_file() || dir.join("SKILL.toml").is_file()
-}
-
-fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dest)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let from = entry.path();
-        let to = dest.join(entry.file_name());
-        if from.is_dir() {
-            copy_dir_recursive(&from, &to)?;
-        } else {
-            std::fs::copy(&from, &to)?;
-        }
-    }
-    Ok(())
-}
-
-fn dir_has_skill_manifests(dir: &Path) -> bool {
-    if !dir.is_dir() {
-        return false;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    entries.filter_map(Result::ok).any(|entry| {
-        let path = entry.path();
-        path.is_dir() && path_has_skill_manifest(&path)
-    })
 }
 
 #[cfg(test)]
@@ -148,5 +103,61 @@ mod tests {
         assert_eq!(SETTINGS_FILE_NAME, "settings.toml");
         assert_eq!(SESSIONS_CATALOG_FILE_NAME, "sessions.toml");
         assert_eq!(TOOLS_CATALOG_FILE_NAME, "tools.toml");
+    }
+
+    #[test]
+    fn materialize_sessions_catalog_copies_when_missing() {
+        let base = std::env::temp_dir().join(format!(
+            "moray-sessions-catalog-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let default_src = base.join("default-sessions.toml");
+        let dest = base.join("sessions.toml");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(&default_src, "default_agent_id = \"abc\"\n").unwrap();
+
+        let path = materialize_sessions_catalog(&dest, &default_src).unwrap();
+        assert_eq!(path, dest);
+        assert!(dest.is_file());
+        assert_eq!(
+            std::fs::read_to_string(&dest).unwrap(),
+            "default_agent_id = \"abc\"\n"
+        );
+
+        std::fs::write(&dest, "default_agent_id = \"user\"\n").unwrap();
+        let path = materialize_sessions_catalog(&dest, &default_src).unwrap();
+        assert_eq!(path, dest);
+        assert_eq!(
+            std::fs::read_to_string(&dest).unwrap(),
+            "default_agent_id = \"user\"\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn ensure_user_skills_dir_does_not_copy_bundled_skills() {
+        let base = std::env::temp_dir().join(format!(
+            "moray-skills-dir-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let bundled = base.join("bundled");
+        let user = base.join("user");
+        std::fs::create_dir_all(bundled.join("web-fetch")).unwrap();
+        std::fs::write(
+            bundled.join("web-fetch/SKILL.md"),
+            "---\nname: web-fetch\ndescription: test\n---\n",
+        )
+        .unwrap();
+
+        ensure_user_skills_dir(&user).unwrap();
+        assert!(user.is_dir());
+        assert!(
+            !user.join("web-fetch").exists(),
+            "bundled skills must not be copied into the user skills dir"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -5,6 +5,7 @@ fn main() {
     // 目录级 watch：新增/修改 resource 文件时让 build.rs 重跑，从而再次执行 tauri-build 的拷贝。
     println!("cargo:rerun-if-changed=resources");
     println!("cargo:rerun-if-changed=tauri.conf.json");
+    println!("cargo:rerun-if-changed=tauri.pro.conf.json");
 
     // 将源码 skills 目录的绝对路径编译进 client（`bundle::COMPILED_SKILLS_SRC`）。
     //
@@ -34,6 +35,14 @@ fn main() {
         println!(
             "cargo:rustc-env=MORAY_SETTINGS_SRC={}",
             settings_src.display()
+        );
+    }
+
+    let sessions_catalog_src = manifest_dir.join("resources/sessions.toml");
+    if sessions_catalog_src.is_file() {
+        println!(
+            "cargo:rustc-env=MORAY_SESSIONS_CATALOG_SRC={}",
+            sessions_catalog_src.display()
         );
     }
 

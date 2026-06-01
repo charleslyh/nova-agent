@@ -6,13 +6,14 @@ use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager};
 
 use crate::sonda::{
-    ensure_sessions_dir, ensure_user_skills_dir, materialize_tools_catalog, SondaRuntimePaths,
-    CHANNELS_CATALOG_FILE_NAME, SESSIONS_CATALOG_FILE_NAME, SETTINGS_FILE_NAME,
-    SKILLS_DIR_NAME, TOOLS_CATALOG_FILE_NAME,
+    ensure_sessions_dir, ensure_user_skills_dir, materialize_sessions_catalog,
+    materialize_tools_catalog, SondaRuntimePaths, CHANNELS_CATALOG_FILE_NAME,
+    SESSIONS_CATALOG_FILE_NAME, SETTINGS_FILE_NAME, SKILLS_DIR_NAME, TOOLS_CATALOG_FILE_NAME,
 };
 
 const MORAY_CLI_EXTERNAL_BIN: &str = "resources/binaries/moray-cli";
 const COMPILED_TOOLS_CATALOG_SRC: Option<&str> = option_env!("MORAY_TOOLS_CATALOG_SRC");
+const COMPILED_SESSIONS_CATALOG_SRC: Option<&str> = option_env!("MORAY_SESSIONS_CATALOG_SRC");
 const COMPILED_SKILLS_SRC: Option<&str> = option_env!("MORAY_SKILLS_SRC_DIR");
 const COMPILED_SETTINGS_SRC: Option<&str> = option_env!("MORAY_SETTINGS_SRC");
 const MORAY_CLI_RUNTIME_NAME: &str = "moray-cli";
@@ -22,9 +23,8 @@ const SKILLS_RUNTIME_DIR: &str = "skills";
 pub fn resolve_runtime_paths(app: &AppHandle) -> Result<SondaRuntimePaths, String> {
     let data_dir = resolve_data_dir(app)?;
     let skills_dir_bundled = resolve_skills_dir_bundled(app)?;
-    let skills_dir_user =
-        ensure_user_skills_dir(&data_dir.join(SKILLS_DIR_NAME), &skills_dir_bundled)
-            .map_err(|e| format!("user skills dir: {e}"))?;
+    let skills_dir_user = ensure_user_skills_dir(&data_dir.join(SKILLS_DIR_NAME))
+        .map_err(|e| format!("user skills dir: {e}"))?;
     let tools_catalog_path = {
         let dest = data_dir.join(TOOLS_CATALOG_FILE_NAME);
         let default = locate_default_tools_catalog(app)?;
@@ -32,6 +32,12 @@ pub fn resolve_runtime_paths(app: &AppHandle) -> Result<SondaRuntimePaths, Strin
             .map_err(|e| format!("tools catalog: {e}"))?
     };
     let sessions_dir = ensure_sessions_dir(&data_dir).map_err(|e| format!("sessions dir: {e}"))?;
+    let sessions_catalog_path = {
+        let dest = data_dir.join(SESSIONS_CATALOG_FILE_NAME);
+        let default = locate_default_sessions_catalog(app)?;
+        materialize_sessions_catalog(&dest, &default)
+            .map_err(|e| format!("sessions catalog: {e}"))?
+    };
     let settings_path_bundled = locate_default_settings(app)?;
     let settings_path_user = data_dir.join(SETTINGS_FILE_NAME);
 
@@ -41,7 +47,7 @@ pub fn resolve_runtime_paths(app: &AppHandle) -> Result<SondaRuntimePaths, Strin
         skills_dir_user,
         tools_catalog_path,
         sessions_dir,
-        sessions_catalog_path: data_dir.join(SESSIONS_CATALOG_FILE_NAME),
+        sessions_catalog_path,
         channels_catalog_path: data_dir.join(CHANNELS_CATALOG_FILE_NAME),
         settings_path_bundled,
         settings_path_user,
@@ -57,10 +63,16 @@ fn resolve_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(data_dir)
 }
 
-fn locate_default_settings(app: &AppHandle) -> Result<PathBuf, String> {
+fn locate_bundled_resource(
+    app: &AppHandle,
+    file_name: &str,
+    compiled_src: Option<&str>,
+    label: &str,
+    setup_hint: &str,
+) -> Result<PathBuf, String> {
     let mut tried = Vec::new();
 
-    if let Ok(path) = path_next_to_executable(SETTINGS_FILE_NAME) {
+    if let Ok(path) = path_next_to_executable(file_name) {
         tried.push(path.display().to_string());
         if path.is_file() {
             return Ok(path);
@@ -68,21 +80,21 @@ fn locate_default_settings(app: &AppHandle) -> Result<PathBuf, String> {
     }
 
     if let Ok(resource_base) = app.path().resource_dir() {
-        let path = resource_base.join(SETTINGS_FILE_NAME);
+        let path = resource_base.join(file_name);
         tried.push(path.display().to_string());
         if path.is_file() {
             return Ok(path);
         }
     }
 
-    if let Ok(path) = app.path().resolve(SETTINGS_FILE_NAME, BaseDirectory::Resource) {
+    if let Ok(path) = app.path().resolve(file_name, BaseDirectory::Resource) {
         tried.push(path.display().to_string());
         if path.is_file() {
             return Ok(path);
         }
     }
 
-    if let Some(src) = COMPILED_SETTINGS_SRC {
+    if let Some(src) = compiled_src {
         let path = PathBuf::from(src);
         tried.push(path.display().to_string());
         if path.is_file() {
@@ -91,50 +103,39 @@ fn locate_default_settings(app: &AppHandle) -> Result<PathBuf, String> {
     }
 
     Err(format!(
-        "settings bundle not found. Tried:\n  {}\n\
-         Ensure src-tauri/resources/settings.toml exists and bundle.resources maps it to settings.toml.",
+        "{label} not found. Tried:\n  {}\n{setup_hint}",
         tried.join("\n  ")
     ))
 }
 
+fn locate_default_settings(app: &AppHandle) -> Result<PathBuf, String> {
+    locate_bundled_resource(
+        app,
+        SETTINGS_FILE_NAME,
+        COMPILED_SETTINGS_SRC,
+        "settings bundle",
+        "Ensure src-tauri/resources/settings.toml exists and bundle.resources maps it to settings.toml.",
+    )
+}
+
 fn locate_default_tools_catalog(app: &AppHandle) -> Result<PathBuf, String> {
-    let mut tried = Vec::new();
+    locate_bundled_resource(
+        app,
+        TOOLS_CATALOG_FILE_NAME,
+        COMPILED_TOOLS_CATALOG_SRC,
+        "tools catalog",
+        "Ensure src-tauri/resources/tools.toml exists and bundle.resources maps it to tools.toml.",
+    )
+}
 
-    if let Ok(path) = path_next_to_executable(TOOLS_CATALOG_FILE_NAME) {
-        tried.push(path.display().to_string());
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
-
-    if let Ok(resource_base) = app.path().resource_dir() {
-        let path = resource_base.join(TOOLS_CATALOG_FILE_NAME);
-        tried.push(path.display().to_string());
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
-
-    if let Ok(path) = app.path().resolve(TOOLS_CATALOG_FILE_NAME, BaseDirectory::Resource) {
-        tried.push(path.display().to_string());
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
-
-    if let Some(src) = COMPILED_TOOLS_CATALOG_SRC {
-        let path = PathBuf::from(src);
-        tried.push(path.display().to_string());
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
-
-    Err(format!(
-        "tools catalog not found. Tried:\n  {}\n\
-         Ensure src-tauri/resources/tools.toml exists and bundle.resources maps it to tools.toml.",
-        tried.join("\n  ")
-    ))
+fn locate_default_sessions_catalog(app: &AppHandle) -> Result<PathBuf, String> {
+    locate_bundled_resource(
+        app,
+        SESSIONS_CATALOG_FILE_NAME,
+        COMPILED_SESSIONS_CATALOG_SRC,
+        "sessions catalog",
+        "Ensure src-tauri/resources/sessions.toml exists and bundle.resources maps it to sessions.toml.",
+    )
 }
 
 fn resolve_moray_cli_path() -> Result<PathBuf, String> {

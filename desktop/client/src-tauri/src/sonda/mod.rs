@@ -5,7 +5,8 @@ mod paths;
 
 pub use bootstrap::build_sonda;
 pub use paths::{
-    materialize_tools_catalog, ensure_sessions_dir, ensure_user_skills_dir, SondaRuntimePaths,
+    materialize_initial_file, materialize_sessions_catalog, materialize_tools_catalog,
+    ensure_sessions_dir, ensure_user_skills_dir, SondaRuntimePaths,
     CHANNELS_CATALOG_FILE_NAME, SESSIONS_CATALOG_FILE_NAME, SESSIONS_DIR_NAME,
     SETTINGS_FILE_NAME, TOOLS_CATALOG_FILE_NAME,
 };

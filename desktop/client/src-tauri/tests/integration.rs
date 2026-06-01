@@ -5,9 +5,9 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 
 use moray_desktop_client::sonda::{
-    build_sonda, materialize_tools_catalog, ensure_sessions_dir, ensure_user_skills_dir,
-    SondaRuntimePaths, CHANNELS_CATALOG_FILE_NAME, SESSIONS_CATALOG_FILE_NAME,
-    SESSIONS_DIR_NAME, SETTINGS_FILE_NAME, TOOLS_CATALOG_FILE_NAME,
+    build_sonda, ensure_sessions_dir, ensure_user_skills_dir, materialize_sessions_catalog,
+    materialize_tools_catalog, SondaRuntimePaths, CHANNELS_CATALOG_FILE_NAME,
+    SESSIONS_CATALOG_FILE_NAME, SESSIONS_DIR_NAME, SETTINGS_FILE_NAME, TOOLS_CATALOG_FILE_NAME,
 };
 use moray_sonda::{SondaSessionTranscripts, SondaStateEvent};
 use tokio::time::{timeout, Duration};
@@ -114,6 +114,10 @@ fn bundled_settings() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/settings.toml")
 }
 
+fn bundled_sessions_catalog() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/sessions.toml")
+}
+
 fn test_moray_cli_path() -> PathBuf {
     let home = std::env::var("HOME").expect("HOME set by TestHomeGuard");
     let path = PathBuf::from(home).join("moray-cli");
@@ -134,13 +138,18 @@ fn test_runtime_paths() -> SondaRuntimePaths {
     let data_dir = test_data_dir();
     std::fs::create_dir_all(&data_dir).expect("create data dir");
     let bundled_skills = bundled_skills_dir();
-    let skills_dir_user = ensure_user_skills_dir(&data_dir.join("skills"), &bundled_skills)
-        .expect("user skills dir");
+    let skills_dir_user =
+        ensure_user_skills_dir(&data_dir.join("skills")).expect("user skills dir");
     let tools_catalog_path = materialize_tools_catalog(
         &data_dir.join(TOOLS_CATALOG_FILE_NAME),
         &bundled_tools_catalog(),
     )
     .expect("tools catalog");
+    let sessions_catalog_path = materialize_sessions_catalog(
+        &data_dir.join(SESSIONS_CATALOG_FILE_NAME),
+        &bundled_sessions_catalog(),
+    )
+    .expect("sessions catalog");
     let sessions_dir = ensure_sessions_dir(&data_dir).expect("sessions dir");
 
     SondaRuntimePaths {
@@ -148,7 +157,7 @@ fn test_runtime_paths() -> SondaRuntimePaths {
         skills_dir_user,
         settings_path_bundled: bundled_settings(),
         settings_path_user: data_dir.join(SETTINGS_FILE_NAME),
-        sessions_catalog_path: data_dir.join(SESSIONS_CATALOG_FILE_NAME),
+        sessions_catalog_path,
         channels_catalog_path: data_dir.join(CHANNELS_CATALOG_FILE_NAME),
         sessions_dir,
         tools_catalog_path,
@@ -230,9 +239,13 @@ async fn build_sonda_loads_bundled_web_fetch_skill() {
     let _home = TestHomeGuard::new();
     let sonda = build_test_sonda().await;
     let skills = sonda.skill_center.catalog();
+    let web_fetch = skills
+        .iter()
+        .find(|s| s.id == "web-fetch")
+        .expect("expected web-fetch in skill center");
     assert!(
-        skills.iter().any(|s| s.id == "web-fetch"),
-        "expected web-fetch in skill center: {skills:?}"
+        !web_fetch.removable,
+        "bundled skills must not be removable: {web_fetch:?}"
     );
     sonda.shutdown().await;
 }

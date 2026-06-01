@@ -6,6 +6,8 @@ Tauri bundles executables listed in `tauri.conf.json` → `bundle.externalBin`. 
 
 ## Install steps
 
+From the repo root, `just install-moray-cli-sidecar` (or `bash scripts/install-moray-cli-sidecar.sh` / `pwsh -File scripts/install-moray-cli-sidecar.ps1` on Windows) builds release `moray-cli` and copies it with the correct host-triple name. Manual steps:
+
 1. Build the CLI (from the repo root):
 
    ```bash

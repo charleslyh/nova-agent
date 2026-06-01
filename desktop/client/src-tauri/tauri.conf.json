@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Moray Desktop",
+  "productName": "Moray Desktop Dev",
   "version": "0.1.0",
-  "identifier": "com.moray.desktop",
+  "identifier": "com.moray.desktop.dev",
   "build": {
     "beforeDevCommand": "corepack pnpm --dir ../web dev",
     "beforeBuildCommand": "corepack pnpm --dir ../web build",
@@ -39,7 +39,8 @@
     "resources": {
       "resources/skills/": "skills/",
       "resources/tools.toml": "tools.toml",
-      "resources/settings.toml": "settings.toml"
+      "resources/settings.toml": "settings.toml",
+      "resources/sessions.toml": "sessions.toml"
     }
   }
 }
