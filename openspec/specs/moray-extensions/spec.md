@@ -33,7 +33,7 @@ The repository SHALL provide `moray-extensions` at `crates/extensions` depending
 - `moray_extensions::preambles::TemplatedPreambler` with template substitutions and optional `PreambleSection` append (e.g. `SkillsSection`)
 - `moray_extensions::skills` — load `SKILL.md` / `SKILL.toml`, render skills into system prompt XML
 - `moray_core::Tool` (built-in tool types)
-- `moray_core::ContextEngine` (`CompositeContextEngine`; `ContextEngineHook` colocated in `context/composite.rs`)
+- `moray_core::ContextEngine` (`CompositeContextEngine` in `context/composite.rs`)
 - `moray_core::ToolCallAuthorizer` policies (e.g. always-ask)
 
 #### Scenario: TemplatedPreambler injects system prompt on assemble

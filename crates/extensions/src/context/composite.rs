@@ -1,4 +1,4 @@
-//! In-memory [`ContextEngine`] with an assemble pipeline and optional teardown hook.
+//! In-memory [`ContextEngine`] with an assemble pipeline.
 
 use std::sync::{Arc, RwLock};
 
@@ -28,15 +28,9 @@ pub trait ContextPipelineNode: Send + Sync {
     }
 }
 
-/// Optional callback invoked from [`CompositeContextEngine::teardown`] with the final message snapshot.
-pub trait ContextEngineHook: Send + Sync {
-    fn on_teardown(&self, messages: &[ChatCompletionRequestMessage]);
-}
-
 pub struct CompositeContextEngine {
     messages: RwLock<Vec<ChatCompletionRequestMessage>>,
     pipeline: Vec<Arc<dyn ContextPipelineNode>>,
-    hook: Option<Arc<dyn ContextEngineHook>>,
 }
 
 /// Fluent builder for [`CompositeContextEngine`].
@@ -44,7 +38,6 @@ pub struct CompositeContextEngine {
 pub struct CompositeContextEngineBuilder {
     messages: Vec<ChatCompletionRequestMessage>,
     pipeline: Vec<Arc<dyn ContextPipelineNode>>,
-    hook: Option<Arc<dyn ContextEngineHook>>,
 }
 
 impl CompositeContextEngineBuilder {
@@ -67,31 +60,11 @@ impl CompositeContextEngineBuilder {
         self
     }
 
-    pub fn hook(mut self, hook: Option<Arc<dyn ContextEngineHook>>) -> Self {
-        self.hook = hook;
-        self
-    }
-
     pub fn build(self) -> CompositeContextEngine {
         CompositeContextEngine {
             messages: RwLock::new(self.messages),
             pipeline: self.pipeline,
-            hook: self.hook,
         }
-    }
-}
-
-impl CompositeContextEngine {
-    pub fn with_messages(
-        messages: Vec<ChatCompletionRequestMessage>,
-        pipeline: Vec<Arc<dyn ContextPipelineNode>>,
-        hook: Option<Arc<dyn ContextEngineHook>>,
-    ) -> Self {
-        CompositeContextEngineBuilder::new()
-            .messages(messages)
-            .pipeline(pipeline)
-            .hook(hook)
-            .build()
     }
 }
 
@@ -134,10 +107,6 @@ impl ContextEngine for CompositeContextEngine {
         for node in self.pipeline.iter().rev() {
             node.teardown()?;
         }
-        let snapshot = self.messages.read().map_err(|_| lock_err())?;
-        if let Some(hook) = &self.hook {
-            hook.on_teardown(&snapshot);
-        }
         Ok(())
     }
 
@@ -156,30 +125,6 @@ mod tests {
     use crate::preambles::TemplatedPreamblerBuilder;
 
     use super::*;
-
-    struct CountingHook(AtomicUsize);
-
-    impl ContextEngineHook for CountingHook {
-        fn on_teardown(&self, messages: &[ChatCompletionRequestMessage]) {
-            self.0.store(messages.len(), Ordering::SeqCst);
-        }
-    }
-
-    #[tokio::test]
-    async fn ingest_and_teardown_invokes_hook() {
-        let hook = Arc::new(CountingHook(AtomicUsize::new(0)));
-        let engine = CompositeContextEngineBuilder::new()
-            .hook(Some(hook.clone()))
-            .build();
-        engine
-            .ingest(vec![ChatCompletionRequestMessage::User {
-                content: "hi".into(),
-            }])
-            .await
-            .expect("ingest");
-        engine.teardown().await.expect("teardown");
-        assert_eq!(hook.0.load(Ordering::SeqCst), 1);
-    }
 
     #[tokio::test]
     async fn assemble_runs_pipeline() {
