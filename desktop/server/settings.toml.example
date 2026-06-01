@@ -1,0 +1,22 @@
+# Optional patch for the desktop app's Tauri app data directory as settings.toml.
+# The client ships a bundled base at src-tauri/resources/settings.toml (preamble_template,
+# default agents/completions). App data settings.toml merges on top (same ids replace rows).
+# Agent skills are bundled under src-tauri/resources/skills/; not configured here.
+# Also create sessions.toml in the same directory — see sessions.toml.example (required at startup).
+#
+# Supported top-level keys: preamble_template, [[completions]], [[agents]].
+
+[[completions]]
+id = "a1b2c3d4"
+name = "OpenAI compatible"
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+# Omit api_key → each turn resolves MORAY_OPENAI_API_KEY (see desktop README).
+# Or: api_key = "env:CUSTOM_KEY" or a literal string (non-empty at load).
+
+[[agents]]
+id = "z9y8x7w6"
+name = "Default"
+completion_id = "a1b2c3d4"
+allowed_tools = ["shell", "file_read", "file_write", "web_search"]
+# character = "Optional persona for {{character}} in the system prompt."

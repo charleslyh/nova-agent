@@ -1,0 +1,28 @@
+[package]
+name = "moray-channels"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Moray IM channel framework, catalog, and connector management"
+
+[dependencies]
+moray-core.workspace = true
+moray-session.workspace = true
+async-trait = "0.1.88"
+dashmap = "6.1.0"
+parking_lot = "0.12.3"
+reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+thiserror = "2.0.12"
+tokio = { version = "1.44.2", features = ["sync", "rt", "macros", "time"] }
+tokio-tungstenite = { version = "0.26.2", features = ["rustls-tls-webpki-roots"] }
+tokio-util = "0.7"
+toml = "0.8"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1.0.140"

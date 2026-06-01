@@ -1,0 +1,512 @@
+<template>
+  <section
+    ref="streamRef"
+    class="stream"
+    aria-label="消息流"
+    @scroll="onScroll"
+  >
+    <div class="stream-inner">
+      <div v-for="(turn, turnIndex) in turnGroups" :key="turn.id" class="turn">
+        <div class="turn-content">
+          <div v-if="turn.user" class="msg-row msg-row--user">
+            <div class="bubble bubble--user">
+              {{ turn.user.text }}
+            </div>
+          </div>
+
+          <template v-for="item in turn.items" :key="item.id">
+            <div
+              v-if="shouldShowStreamItem(item)"
+              class="msg-row"
+              :class="`msg-row--${item.role === 'tool' || item.role === 'think' || item.role === 'error' ? 'assistant' : item.role}`"
+            >
+              <ToolCallCard
+                v-if="item.role === 'tool'"
+                :item="item"
+                :expanded="isExpanded(item.id)"
+                :read-only="readOnly"
+                :read-only-hint="readOnlyHint"
+                @toggle="toggleToolCard(item.id)"
+                @approve="handleToolAuthApprove"
+                @deny="handleToolAuthDeny"
+              />
+              <ThinkCard
+                v-else-if="item.role === 'think'"
+                :item="item"
+                :expanded="isThinkExpanded(item.id)"
+                @toggle="toggleThinkCard(item.id)"
+              />
+              <div
+                v-else-if="item.role === 'error'"
+                class="system-error-line"
+                role="alert"
+                aria-live="polite"
+              >
+                <span class="system-error-line__label">失败</span>
+                <span class="system-error-line__content">
+                  {{ item.text }}
+                </span>
+              </div>
+              <div
+                v-else-if="hasVisibleAssistantText(item.text)"
+                class="text text--assistant markdown-body"
+                v-html="renderAssistantMarkdown(item.text, { sessionDir: props.sessionDir })"
+              />
+            </div>
+          </template>
+        </div>
+
+        <div v-if="showTurnPending(turnIndex)" class="turn-progress" aria-label="生成中">
+          <span class="turn-progress-dot" />
+          <span class="turn-progress-dot" />
+          <span class="turn-progress-dot" />
+        </div>
+      </div>
+    </div>
+  </section>
+</template>
+
+<script setup>
+import { computed, nextTick, ref, watch } from "vue";
+import { renderAssistantMarkdown } from "@/lib/markdown.js";
+import ToolCallCard from "@/components/chat/ToolCallCard.vue";
+import ThinkCard from "@/components/chat/ThinkCard.vue";
+
+const BOTTOM_THRESHOLD = 20;
+
+const props = defineProps({
+  /** 会话消息序列（用户 / 助手 / 工具等），按时间顺序排列 */
+  messages: {
+    type: Array,
+    required: true
+  },
+  status: {
+    type: String,
+    required: true
+  },
+  /** Session workspace on disk (for resolving relative markdown image paths). */
+  sessionDir: {
+    type: String,
+    default: null
+  },
+  readOnly: {
+    type: Boolean,
+    default: false
+  },
+  readOnlyHint: {
+    type: String,
+    default: "IM"
+  }
+});
+const emit = defineEmits(["tool-auth-approve", "tool-auth-deny"]);
+
+const streamRef = ref(null);
+const autoStickToBottom = ref(true);
+const lastScrollMode = ref("auto");
+const expandedToolCardIds = ref(new Set());
+const expandedThinkCardIds = ref(new Set());
+const manualPinnedThinkId = ref(null);
+const lastActiveStreamingThinkId = ref(null);
+function hasVisibleAssistantText(text) {
+  return typeof text === "string" && text.trim().length > 0;
+}
+
+function shouldShowStreamItem(item) {
+  if (!item || typeof item.role !== "string") {
+    return false;
+  }
+  if (item.role === "tool" || item.role === "think") {
+    return true;
+  }
+  if (item.role === "error") {
+    return hasVisibleAssistantText(item.text);
+  }
+  return hasVisibleAssistantText(item.text);
+}
+
+const turnGroups = computed(() => {
+  const groups = [];
+  let currentTurn = null;
+
+  for (const item of props.messages) {
+    if (!item || typeof item.role !== "string") {
+      continue;
+    }
+    if (item.role === "user") {
+      currentTurn = {
+        id: item.id,
+        user: item,
+        items: []
+      };
+      groups.push(currentTurn);
+      continue;
+    }
+
+    if (!currentTurn) {
+      currentTurn = {
+        id: `orphan-${item.id}`,
+        user: null,
+        items: []
+      };
+      groups.push(currentTurn);
+    }
+
+    currentTurn.items.push(item);
+  }
+
+  return groups;
+});
+
+function isNearBottom(element) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_THRESHOLD;
+}
+
+function onScroll() {
+  const element = streamRef.value;
+  if (!element) return;
+  autoStickToBottom.value = isNearBottom(element);
+}
+
+function isExpanded(id) {
+  return expandedToolCardIds.value.has(id);
+}
+
+function toggleToolCard(id) {
+  const next = new Set(expandedToolCardIds.value);
+  if (next.has(id)) {
+    next.delete(id);
+  } else {
+    next.add(id);
+  }
+  expandedToolCardIds.value = next;
+}
+
+function handleToolAuthApprove(callId) {
+  if (props.readOnly) return;
+  emit("tool-auth-approve", callId);
+}
+
+function handleToolAuthDeny(callId) {
+  if (props.readOnly) return;
+  emit("tool-auth-deny", callId);
+}
+
+function isThinkExpanded(id) {
+  return expandedThinkCardIds.value.has(id);
+}
+
+function toggleThinkCard(id) {
+  const currentlyExpanded = expandedThinkCardIds.value.has(id);
+  if (currentlyExpanded) {
+    expandedThinkCardIds.value = new Set();
+    if (manualPinnedThinkId.value === id) {
+      manualPinnedThinkId.value = null;
+    }
+    return;
+  }
+  expandedThinkCardIds.value = new Set([id]);
+  manualPinnedThinkId.value = id;
+}
+
+function showTurnPending(turnIndex) {
+  const isLastTurn = turnIndex === turnGroups.value.length - 1;
+  return isLastTurn && props.status === "running";
+}
+
+watch(
+  () =>
+    props.messages
+      .filter((item) => item && typeof item.role === "string")
+      .map((item) => `${item.id}:${item.role}:${item.done ? "done" : "open"}:${item.expanded ? "expanded" : "collapsed"}`)
+      .join("|"),
+  () => {
+    const thinkItems = props.messages.filter(
+      (item) => item && typeof item.role === "string" && item.role === "think"
+    );
+    if (thinkItems.length === 0) {
+      expandedThinkCardIds.value = new Set();
+      manualPinnedThinkId.value = null;
+      lastActiveStreamingThinkId.value = null;
+      return;
+    }
+
+    const activeStreaming = [...thinkItems].reverse().find((it) => !it.done) ?? null;
+    const activeStreamingId = activeStreaming?.id ?? null;
+    if (
+      activeStreamingId &&
+      activeStreamingId !== lastActiveStreamingThinkId.value
+    ) {
+      // A new think stream started, so we release user pin and follow latest by default.
+      manualPinnedThinkId.value = null;
+    }
+    lastActiveStreamingThinkId.value = activeStreamingId;
+
+    if (manualPinnedThinkId.value) {
+      const pinned = thinkItems.find((it) => it.id === manualPinnedThinkId.value);
+      if (pinned) {
+        expandedThinkCardIds.value = new Set([pinned.id]);
+        return;
+      }
+      manualPinnedThinkId.value = null;
+    }
+
+    if (activeStreaming) {
+      expandedThinkCardIds.value = new Set([activeStreaming.id]);
+    } else {
+      // Auto mode keeps completed think cards folded.
+      expandedThinkCardIds.value = new Set();
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => {
+    const last = props.messages[props.messages.length - 1];
+    const length = props.messages.length;
+    const kind = length === 1 ? "first-item" : (last?.id ?? "");
+    const lastTextLength = (last?.text ?? "").length;
+    return `${length}:${kind}:${lastTextLength}`;
+  },
+  async () => {
+    const element = streamRef.value;
+    if (!element) return;
+    const contentFitsViewport = element.scrollHeight <= element.clientHeight;
+    const shouldStick = autoStickToBottom.value || isNearBottom(element) || contentFitsViewport;
+    if (!shouldStick) return;
+    const isFirstMessage = props.messages.length === 1;
+    const shouldSmooth = isFirstMessage && lastScrollMode.value !== "smooth";
+    await nextTick();
+    element.scrollTo({
+      top: element.scrollHeight,
+      behavior: shouldSmooth ? "smooth" : "auto"
+    });
+    lastScrollMode.value = shouldSmooth ? "smooth" : "auto";
+    autoStickToBottom.value = true;
+  }
+);
+</script>
+
+<style scoped>
+.stream {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-top: 2px;
+  /* 与下方 content-lane 同宽对齐：避免纵向滚动条吃掉 stream 宽度而 composer 仍占满整栏 */
+  scrollbar-gutter: stable;
+}
+
+.stream-inner {
+  width: min(100%, 920px);
+  margin: 0 auto;
+  padding: 0 16px;
+  box-sizing: border-box;
+}
+
+.stream::-webkit-scrollbar {
+  width: 10px;
+}
+
+.stream::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.stream::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 125, 0.42);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.stream::-webkit-scrollbar-thumb:hover {
+  background: rgba(95, 95, 100, 0.58);
+  background-clip: content-box;
+}
+
+.stream {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 120, 125, 0.42) transparent;
+}
+
+.msg-row {
+  display: flex;
+  margin-bottom: 12px;
+}
+
+.turn {
+  margin-bottom: 6px;
+}
+
+.turn-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.msg-row--user {
+  justify-content: flex-end;
+}
+
+.msg-row--assistant {
+  justify-content: flex-start;
+}
+
+.bubble {
+  max-width: 62%;
+  font-size: 15px;
+  line-height: 1.5;
+  padding: 10px 14px;
+  border-radius: 14px;
+}
+
+.bubble--user {
+  background: #ececed;
+  color: #2d2d2d;
+}
+
+.text {
+  width: min(72%, 760px);
+  max-width: 100%;
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.text--assistant {
+  padding-top: 4px;
+}
+
+.system-error-line {
+  width: min(72%, 760px);
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f7f7f8;
+  border: 1px solid #e7e7ea;
+}
+
+.system-error-line__label {
+  flex: 0 0 auto;
+  color: #b42318;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.system-error-line__content {
+  color: #5f5f67;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.turn-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 10px 2px;
+}
+
+.turn-progress-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #9b9ba1;
+  opacity: 0.3;
+  animation: turn-progress-dot 1.2s infinite ease-in-out;
+}
+
+.turn-progress-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.turn-progress-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes turn-progress-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 0.9;
+    transform: translateY(-1px);
+  }
+}
+
+.markdown-body :deep(p) {
+  margin: 0 0 0.6em;
+}
+
+.markdown-body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown-body :deep(img) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.5em 0;
+  border-radius: 8px;
+}
+
+.markdown-body :deep(code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 6px;
+  padding: 0.08em 0.35em;
+}
+
+.markdown-body :deep(pre code) {
+  display: block;
+  padding: 0;
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.markdown-body :deep(pre code:not(.hljs)) {
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-x: auto;
+  color: #24292e;
+  background: #f6f8fa;
+}
+
+.markdown-body :deep(pre) {
+  margin: 0 0 0.7em;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid rgba(27, 31, 36, 0.12);
+  background: transparent;
+}
+
+.markdown-body :deep(pre code.hljs) {
+  padding: 1em;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.markdown-body :deep(section) {
+  margin: 0;
+  padding: 0;
+}
+
+.markdown-body :deep(.katex-display) {
+  display: block;
+  margin: 0.55em 0;
+  max-width: 100%;
+  padding-block: 0.25em;
+}
+</style>

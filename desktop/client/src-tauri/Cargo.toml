@@ -1,0 +1,49 @@
+[package]
+name = "moray-desktop-client"
+version = "0.1.0"
+edition = "2021"
+publish = false
+# Binary-only app: do not treat src/main.rs as a unit-test harness (avoids cfg(test) in IDE).
+autotests = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "moray-desktop-client"
+path = "src/main.rs"
+
+[features]
+default = ["tauri-app"]
+tauri-app = ["dep:tauri"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+moray-extensions.workspace = true
+moray-channels.workspace = true
+moray-core.workspace = true
+moray-desktop-server.workspace = true
+moray-session.workspace = true
+moray-skillhub.workspace = true
+moray-sonda.workspace = true
+thiserror = "2.0.12"
+tracing = "0.1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.44.2", features = ["rt", "rt-multi-thread", "macros", "time"] }
+tokio-util = "0.7.15"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+tauri = { version = "2", features = ["protocol-asset"], optional = true }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[dev-dependencies]
+moray-extensions.workspace = true
+serde_json = "1.0.140"
+tempfile = "3"

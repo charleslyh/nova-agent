@@ -1,0 +1,14 @@
+/target
+/desktop/target
+**/*.rs.bk
+**/.DS_Store
+
+/.pnpm-store
+
+**/node_modules
+**/gen/schemas
+desktop/web/dist/
+
+transcript*.jsonl
+*.log
+

@@ -1,0 +1,251 @@
+//! Fold persisted transcript rows into LLM request messages.
+
+use moray_core::{
+    AgentResponseEvent, ChatCompletionFinishReason, ChatCompletionRequestMessage,
+    ChatCompletionResponseChunk, ToolCallEvent, ToolCallRequest,
+};
+use moray_session::SessionEventKind;
+
+use super::SondaSessionEventRecord;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SondaSessionSnapshot {
+    pub messages: Vec<ChatCompletionRequestMessage>,
+}
+
+pub fn replay_records(records: &[SondaSessionEventRecord]) -> SondaSessionSnapshot {
+    let mut messages = Vec::new();
+    let mut pending_text = String::new();
+    let mut pending_tools: Vec<ToolCallRequest> = Vec::new();
+
+    for record in records {
+        match &record.event.kind {
+            SessionEventKind::TurnAccepted { input } => {
+                if !pending_tools.is_empty() || !pending_text.is_empty() {
+                    pending_text.clear();
+                    pending_tools.clear();
+                }
+                messages.push(ChatCompletionRequestMessage::User {
+                    content: input.content.clone(),
+                });
+            }
+            SessionEventKind::AgentResponse { agent } => {
+                fold_agent_event(agent, &mut messages, &mut pending_text, &mut pending_tools);
+            }
+            SessionEventKind::Reset => {
+                pending_text.clear();
+                pending_tools.clear();
+                messages.clear();
+            }
+            SessionEventKind::TurnFinish => {}
+        }
+    }
+
+    if !pending_tools.is_empty() || !pending_text.is_empty() {
+        flush_pending_assistant(&mut messages, &mut pending_text, &mut pending_tools);
+    }
+
+    SondaSessionSnapshot { messages }
+}
+
+fn flush_pending_assistant(
+    messages: &mut Vec<ChatCompletionRequestMessage>,
+    pending_text: &mut String,
+    pending_tools: &mut Vec<ToolCallRequest>,
+) {
+    if pending_text.is_empty() && pending_tools.is_empty() {
+        return;
+    }
+    let tool_calls = if pending_tools.is_empty() {
+        None
+    } else {
+        Some(std::mem::take(pending_tools))
+    };
+    messages.push(ChatCompletionRequestMessage::Assistant {
+        content: std::mem::take(pending_text),
+        tool_calls,
+    });
+}
+
+fn fold_agent_event(
+    agent_ev: &AgentResponseEvent,
+    messages: &mut Vec<ChatCompletionRequestMessage>,
+    pending_text: &mut String,
+    pending_tools: &mut Vec<ToolCallRequest>,
+) {
+    match agent_ev {
+        AgentResponseEvent::Started => {}
+        AgentResponseEvent::CompletionResponse { chunk } => match chunk {
+            ChatCompletionResponseChunk::TextBlock(s) => {
+                pending_text.push_str(s);
+            }
+            ChatCompletionResponseChunk::Think(_) => {}
+            ChatCompletionResponseChunk::ThinkDone => {}
+            ChatCompletionResponseChunk::TextDone => {}
+            ChatCompletionResponseChunk::ToolCall(tc) => {
+                pending_tools.push(tc.clone());
+            }
+            ChatCompletionResponseChunk::Done { reason } => {
+                let refusal_str = match reason {
+                    ChatCompletionFinishReason::Refusal { reason } => {
+                        reason.as_deref().unwrap_or("")
+                    }
+                    _ => "",
+                };
+                let mut content = std::mem::take(pending_text);
+                if !refusal_str.is_empty() {
+                    if !content.is_empty() {
+                        content.push('\n');
+                    }
+                    content.push_str(refusal_str);
+                }
+                let tool_calls_opt = if pending_tools.is_empty() {
+                    None
+                } else {
+                    Some(std::mem::take(pending_tools))
+                };
+                if !content.is_empty() || tool_calls_opt.is_some() {
+                    messages.push(ChatCompletionRequestMessage::Assistant {
+                        content,
+                        tool_calls: tool_calls_opt,
+                    });
+                }
+            }
+        },
+        AgentResponseEvent::ToolCall { event } => match event {
+            ToolCallEvent::Requested { .. } => {}
+            ToolCallEvent::Custom { .. } => {}
+            ToolCallEvent::Started { .. } => {}
+            ToolCallEvent::Completed { content } => {
+                flush_pending_assistant(messages, pending_text, pending_tools);
+                messages.push(ChatCompletionRequestMessage::Tool {
+                    content: content.content.clone(),
+                    call_id: content.call_id.clone(),
+                });
+            }
+        },
+        AgentResponseEvent::Finished { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use moray_core::{AgentFinishKind, ToolCallResult, ToolCallStatus};
+    use moray_session::{SessionEvent, SessionEventKind, TurnInput};
+
+    fn record(seq: u64, kind: SessionEventKind) -> SondaSessionEventRecord {
+        SondaSessionEventRecord {
+            seq,
+            event: SessionEvent {
+                session_id: "test-session".into(),
+                ts: 0,
+                kind,
+            },
+        }
+    }
+
+    fn user(seq: u64, c: &str) -> SondaSessionEventRecord {
+        record(
+            seq,
+            SessionEventKind::TurnAccepted {
+                input: TurnInput { content: c.into() },
+            },
+        )
+    }
+
+    fn agent(seq: u64, agent: AgentResponseEvent) -> SondaSessionEventRecord {
+        record(seq, SessionEventKind::AgentResponse { agent })
+    }
+
+    fn tb(s: &str) -> AgentResponseEvent {
+        AgentResponseEvent::CompletionResponse {
+            chunk: ChatCompletionResponseChunk::TextBlock(s.into()),
+        }
+    }
+
+    fn td() -> AgentResponseEvent {
+        AgentResponseEvent::CompletionResponse {
+            chunk: ChatCompletionResponseChunk::TextDone,
+        }
+    }
+
+    fn done_stop() -> AgentResponseEvent {
+        AgentResponseEvent::CompletionResponse {
+            chunk: ChatCompletionResponseChunk::Done {
+                reason: ChatCompletionFinishReason::Stop,
+            },
+        }
+    }
+
+    fn tc(call_id: &str, name: &str, args: &str) -> AgentResponseEvent {
+        AgentResponseEvent::CompletionResponse {
+            chunk: ChatCompletionResponseChunk::ToolCall(ToolCallRequest {
+                call_id: call_id.into(),
+                name: name.into(),
+                arguments: args.into(),
+            }),
+        }
+    }
+
+    fn tcf(call_id: &str, content: &str) -> AgentResponseEvent {
+        AgentResponseEvent::ToolCall {
+            event: ToolCallEvent::Completed {
+                content: ToolCallResult {
+                    call_id: call_id.into(),
+                    content: content.into(),
+                    status: ToolCallStatus::Success,
+                },
+            },
+        }
+    }
+
+    fn finished(kind: AgentFinishKind) -> AgentResponseEvent {
+        AgentResponseEvent::Finished { kind }
+    }
+
+    #[test]
+    fn closed_turn_replay_ignores_trailing_finished_event() {
+        let records = vec![
+            user(1, "hi"),
+            agent(2, tb("partial")),
+            agent(3, td()),
+            agent(4, done_stop()),
+            agent(5, finished(AgentFinishKind::Succeeded)),
+        ];
+        let s = replay_records(&records);
+        assert_eq!(s.messages.len(), 2);
+    }
+
+    #[test]
+    fn replay_session_closes_assistant_at_done() {
+        let records = vec![
+            user(1, "hi"),
+            agent(2, tb("hel")),
+            agent(3, td()),
+            agent(4, done_stop()),
+        ];
+        let s = replay_records(&records);
+        assert_eq!(s.messages.len(), 2);
+    }
+
+    #[test]
+    fn new_user_aborts_partial_assistant() {
+        let records = vec![user(1, "hi"), agent(2, tb("hel")), user(3, "next")];
+        let s = replay_records(&records);
+        assert_eq!(s.messages.len(), 2);
+    }
+
+    #[test]
+    fn tool_call_finished_appends_tool_message() {
+        let records = vec![
+            user(1, "hi"),
+            agent(2, td()),
+            agent(3, tc("c1", "echo", "{}")),
+            agent(4, done_stop()),
+            agent(5, tcf("c1", "ok")),
+        ];
+        let s = replay_records(&records);
+        assert_eq!(s.messages.len(), 3);
+    }
+}
