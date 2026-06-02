@@ -1,5 +1,4 @@
 mod calc;
-mod catalog;
 mod file_read;
 mod file_write;
 mod image_create;
@@ -17,5 +16,3 @@ pub use image_edit::ImageEditTool;
 pub use shell::ShellTool;
 pub use web_fetch::WebFetchTool;
 pub use web_search::WebSearchTool;
-
-pub use catalog::{ToolCatalog, ToolCatalogError};

@@ -2390,6 +2390,7 @@ dependencies = [
  "clap",
  "moray-core",
  "moray-extensions",
+ "moray-sonda",
  "serde_json",
  "tokio",
 ]

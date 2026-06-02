@@ -9,6 +9,7 @@ mod settings_store;
 mod skill_center;
 mod snapshot;
 mod sonda;
+mod tool_catalog;
 mod transcripts;
 
 pub use error::{
@@ -31,6 +32,7 @@ pub use sonda::{
     CreateChannelResult, InstallSkillError, Sonda, SondaBuilder, UninstallSkillError,
     UninstallSkillResult,
 };
+pub use tool_catalog::{SondaToolCatalog, SondaToolCatalogError};
 pub use transcripts::{
     replay_records, SondaSessionEventRecord, SondaSessionTranscripts, SondaSessionTranscriptsError,
 };

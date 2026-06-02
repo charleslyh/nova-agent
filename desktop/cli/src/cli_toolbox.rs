@@ -7,21 +7,21 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use moray_core::{parse_tool_call_args, MorayError, Tool, ToolManifest};
-use moray_extensions::ToolCatalog;
+use moray_sonda::SondaToolCatalog;
 
 /// Tools exposed by this `moray-cli` binary (catalog metadata + runnable instances).
 ///
-/// [`ToolCatalog`] supplies manifests only; listing uses the registered tool set.
+/// [`SondaToolCatalog`] supplies manifests only; listing uses the registered tool set.
 /// Catalog rows without a matching tool are dropped at construction.
 pub struct CliToolbox {
-    catalog: ToolCatalog,
+    catalog: SondaToolCatalog,
     tools: HashMap<String, Arc<dyn Tool>>,
 }
 
 impl CliToolbox {
     /// Each tool's [`Tool::name`] must exist in `catalog`. Catalog rows without a tool are ignored.
     pub fn new(
-        catalog: ToolCatalog,
+        catalog: SondaToolCatalog,
         tool_instances: impl IntoIterator<Item = Arc<dyn Tool>>,
     ) -> Result<Self, MorayError> {
         let mut tools = HashMap::new();
@@ -146,7 +146,7 @@ parameters = '{}'
 
     #[test]
     fn list_tools_preserves_catalog_order() {
-        let catalog = moray_extensions::ToolCatalog::from_str(TEST_CATALOG).unwrap();
+        let catalog = SondaToolCatalog::from_str(TEST_CATALOG).unwrap();
         let tools: Vec<Arc<dyn moray_core::Tool>> = vec![
             Arc::new(BetaTool),
             Arc::new(AlphaTool),
@@ -160,7 +160,7 @@ parameters = '{}'
 
     #[test]
     fn list_tools_omits_unregistered_catalog_rows() {
-        let catalog = moray_extensions::ToolCatalog::from_str(TEST_CATALOG).unwrap();
+        let catalog = SondaToolCatalog::from_str(TEST_CATALOG).unwrap();
         let tools: Vec<Arc<dyn moray_core::Tool>> = vec![Arc::new(BetaTool)];
         let toolbox = CliToolbox::new(catalog, tools).unwrap();
         let names: Vec<_> = toolbox.list_tools().into_iter().map(|d| d.name).collect();
@@ -169,7 +169,7 @@ parameters = '{}'
 
     #[test]
     fn new_rejects_tool_missing_from_catalog() {
-        let catalog = moray_extensions::ToolCatalog::from_str(
+        let catalog = SondaToolCatalog::from_str(
             r#"
 [[tools]]
 name = "echo"

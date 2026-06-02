@@ -1,7 +1,7 @@
 //! Tool manifest catalog loaded from TOML (`description`, `parameters`, optional `label`).
 //!
 //! The canonical `tools.toml` is an application resource (desktop client `resources/tools.toml`).
-//! Load it via [`ToolCatalog::open`] using a path from the app layer.
+//! Load it via [`SondaToolCatalog::open`] using a path from the app layer.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,7 +12,7 @@ use thiserror::Error;
 
 /// Errors while parsing or validating a tool catalog file.
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum ToolCatalogError {
+pub enum SondaToolCatalogError {
     #[error("read catalog file: {0}")]
     Io(String),
 
@@ -41,26 +41,26 @@ struct ToolCatalogRow {
 
 /// In-memory catalog of tool manifests (canonical registration order).
 #[derive(Debug, Clone, Default)]
-pub struct ToolCatalog {
+pub struct SondaToolCatalog {
     order: Vec<String>,
     manifests: HashMap<String, ToolManifest>,
     labels: HashMap<String, String>,
 }
 
-impl ToolCatalog {
-    pub fn from_str(raw: &str) -> Result<Self, ToolCatalogError> {
+impl SondaToolCatalog {
+    pub fn from_str(raw: &str) -> Result<Self, SondaToolCatalogError> {
         let file: ToolsFile =
-            toml::from_str(raw).map_err(|e| ToolCatalogError::Parse(e.to_string()))?;
+            toml::from_str(raw).map_err(|e| SondaToolCatalogError::Parse(e.to_string()))?;
         Self::from_rows(file.tools)
     }
 
-    pub fn open(path: &Path) -> Result<Self, ToolCatalogError> {
+    pub fn open(path: &Path) -> Result<Self, SondaToolCatalogError> {
         let raw = std::fs::read_to_string(path)
-            .map_err(|e| ToolCatalogError::Io(format!("{}: {e}", path.display())))?;
+            .map_err(|e| SondaToolCatalogError::Io(format!("{}: {e}", path.display())))?;
         Self::from_str(&raw)
     }
 
-    fn from_rows(rows: Vec<ToolCatalogRow>) -> Result<Self, ToolCatalogError> {
+    fn from_rows(rows: Vec<ToolCatalogRow>) -> Result<Self, SondaToolCatalogError> {
         let mut order = Vec::with_capacity(rows.len());
         let mut manifests = HashMap::new();
         let mut labels = HashMap::new();
@@ -69,27 +69,27 @@ impl ToolCatalog {
         for row in rows {
             let name = row.name.trim().to_string();
             if name.is_empty() {
-                return Err(ToolCatalogError::Validation(
+                return Err(SondaToolCatalogError::Validation(
                     "tool name must not be empty".into(),
                 ));
             }
             if !seen.insert(name.clone()) {
-                return Err(ToolCatalogError::Validation(format!(
+                return Err(SondaToolCatalogError::Validation(format!(
                     "duplicate tool name `{name}`"
                 )));
             }
             if row.description.trim().is_empty() {
-                return Err(ToolCatalogError::Validation(format!(
+                return Err(SondaToolCatalogError::Validation(format!(
                     "tool `{name}` description must not be empty"
                 )));
             }
             if row.parameters.trim().is_empty() {
-                return Err(ToolCatalogError::Validation(format!(
+                return Err(SondaToolCatalogError::Validation(format!(
                     "tool `{name}` parameters must not be empty"
                 )));
             }
             if serde_json::from_str::<serde_json::Value>(&row.parameters).is_err() {
-                return Err(ToolCatalogError::Validation(format!(
+                return Err(SondaToolCatalogError::Validation(format!(
                     "tool `{name}` parameters is not valid JSON"
                 )));
             }
@@ -191,7 +191,7 @@ parameters = '{"type":"object"}'
 
     #[test]
     fn loads_catalog_and_labels() {
-        let catalog = ToolCatalog::from_str(SAMPLE).expect("valid");
+        let catalog = SondaToolCatalog::from_str(SAMPLE).expect("valid");
         assert_eq!(catalog.names(), &["echo", "calc"]);
         assert_eq!(catalog.label("echo"), "Echo");
         assert_eq!(catalog.label("calc"), "calc");
@@ -209,9 +209,7 @@ name = "a"
 description = "d2"
 parameters = '{}'
 "#;
-        let err = ToolCatalog::from_str(raw).expect_err("dup");
-        assert!(matches!(err, ToolCatalogError::Validation(_)));
+        let err = SondaToolCatalog::from_str(raw).expect_err("dup");
+        assert!(matches!(err, SondaToolCatalogError::Validation(_)));
     }
-
-
 }

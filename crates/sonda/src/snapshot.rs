@@ -10,7 +10,7 @@ use moray_session::{SessionEvent, SessionEventKind, SessionEventSink};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use crate::session_catalog::{SessionCatalogEntry, SondaSessionCatalog};
+use crate::{SessionCatalogEntry, SondaSessionCatalog};
 
 /// Per-session turn activity for sidebar / multi-client sync.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

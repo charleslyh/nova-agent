@@ -5,12 +5,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::SondaSessionTranscripts;
+use crate::{
+    SkillCenter, SondaSessionCatalog, SondaSessionFactory, SondaSessionHarness,
+    SondaSessionTranscripts, SondaSettingsStore, SondaSnapshot, SondaToolCatalog,
+    SondaToolRegistration, UnregisterSkillError,
+};
 use moray_skillhub::{SkillHub, SkillHubError};
 use serde::Serialize;
 use serde_json::Value;
-
-use crate::skill_center::UnregisterSkillError;
 use moray_core::ToolCallAuthorizer;
 use moray_session::LiveSessions;
 
@@ -20,13 +22,6 @@ use crate::error::{
 };
 use moray_channels::{ChannelCatalog, ChannelEntry, ChannelFactoryFn, ChannelsManager};
 use moray_extensions::auths::AlwaysAsking;
-use moray_extensions::ToolCatalog;
-use crate::harness::{SondaSessionHarness, SondaToolRegistration};
-use crate::session_factory::SondaSessionFactory;
-use crate::snapshot::SondaSnapshot;
-use crate::session_catalog::{session_name_from_input, SondaSessionCatalog};
-use crate::settings_store::SondaSettingsStore;
-use crate::skill_center::SkillCenter;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InstallSkillError {
@@ -225,12 +220,13 @@ impl Sonda {
     }
 
     fn init_session(&self, session_id: &str, name: &str) -> Result<()> {
-        let display_name = session_name_from_input(name);
+        let display_name = self.session_catalog
+            .add_session_entry(session_id, name)?;
 
-        self.session_catalog.add_session_entry(session_id, name)?;
         self.session_transcripts
             .create(session_id)
             .map_err(SondaError::from)?;
+
         self.snapshot
             .notify_session_added(session_id, &display_name);
 
@@ -302,7 +298,7 @@ pub struct SondaBuilder {
     session_transcripts: Option<Arc<SondaSessionTranscripts>>,
     channel_catalog: Option<Arc<ChannelCatalog>>,
     sessions_dir: Option<PathBuf>,
-    tool_catalog: Option<ToolCatalog>,
+    tool_catalog: Option<SondaToolCatalog>,
     tool_regs: Option<Vec<SondaToolRegistration>>,
     channel_factories: Option<HashMap<String, ChannelFactoryFn>>,
 }
@@ -363,7 +359,7 @@ impl SondaBuilder {
     pub fn harness_components(
         mut self,
         sessions_dir: impl Into<PathBuf>,
-        tool_catalog: ToolCatalog,
+        tool_catalog: SondaToolCatalog,
         tools: Vec<SondaToolRegistration>,
     ) -> Self {
         self.sessions_dir = Some(sessions_dir.into());

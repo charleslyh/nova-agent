@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use moray_extensions::ToolCatalog;
 use moray_extensions::channels::{qq, wecom};
 use moray_extensions::tools::{
     FileReadTool, FileWriteTool, ImageCreateTool, ImageEditTool, ShellTool, WebSearchTool,
@@ -18,7 +17,7 @@ use moray_skillhub::SkillHub;
 use moray_sonda::{
     SessionCatalogError, SkillCenter, SkillDirKind, SkillDirSource, SkillFilterKind, Sonda,
     SondaBuilder, SondaError, SondaSessionCatalog, SondaSessionTranscripts, SondaSettingsStore,
-    SondaSettingsStoreError, SondaToolRegistration,
+    SondaSettingsStoreError, SondaToolCatalog, SondaToolCatalogError, SondaToolRegistration,
 };
 use tracing::{info, warn};
 
@@ -39,7 +38,7 @@ pub enum SondaBootstrapError {
     Session(#[from] moray_core::MorayError),
 
     #[error(transparent)]
-    ToolCatalog(#[from] moray_extensions::ToolCatalogError),
+    ToolCatalog(#[from] SondaToolCatalogError),
 }
 
 impl From<SondaSettingsStoreError> for SondaBootstrapError {
@@ -182,7 +181,7 @@ pub fn build_sonda(paths: &SondaRuntimePaths) -> Result<Sonda, SondaBootstrapErr
         create_channel_catalog_ops(),
     )?);
     let session_transcripts = Arc::new(SondaSessionTranscripts::new(&paths.sessions_dir));
-    let tool_catalog = ToolCatalog::open(&paths.tools_catalog_path)?;
+    let tool_catalog = SondaToolCatalog::open(&paths.tools_catalog_path)?;
 
     SondaBuilder::new()
         .settings(settings_store)

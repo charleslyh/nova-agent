@@ -3,10 +3,9 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use moray_channels::ChannelCatalogError;
 use moray_core::{MorayError, ToolboxError};
-use moray_extensions::ToolCatalogError;
 use moray_sonda::{
     FileIoError, InvalidContent, MissingReference, SessionCatalogError, SondaError,
-    SondaSessionError, SondaSettingsStoreError,
+    SondaSessionError, SondaSettingsStoreError, SondaToolCatalogError,
 };
 use serde::Serialize;
 
@@ -76,10 +75,10 @@ fn session_catalog_http_status(err: &SessionCatalogError) -> (StatusCode, String
     }
 }
 
-fn tool_catalog_http_status(err: &ToolCatalogError) -> (StatusCode, String) {
+fn tool_catalog_http_status(err: &SondaToolCatalogError) -> (StatusCode, String) {
     match err {
-        ToolCatalogError::Validation(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
-        ToolCatalogError::Parse(msg) | ToolCatalogError::Io(msg) => {
+        SondaToolCatalogError::Validation(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+        SondaToolCatalogError::Parse(msg) | SondaToolCatalogError::Io(msg) => {
             (StatusCode::INTERNAL_SERVER_ERROR, msg.clone())
         }
     }

@@ -12,8 +12,6 @@ pub mod preambles;
 pub mod skills;
 pub mod tools;
 
-pub use tools::{ToolCatalog, ToolCatalogError};
-
 pub use moray_session::{
     Harness, SessionEvent, SessionEventKind, SessionEventSink, SessionRuntime, TurnInput,
 };

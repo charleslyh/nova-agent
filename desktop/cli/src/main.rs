@@ -7,8 +7,8 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use moray_extensions::tools::WebFetchTool;
-use moray_extensions::ToolCatalog;
 use moray_core::Tool;
+use moray_sonda::SondaToolCatalog;
 use cli_toolbox::CliToolbox;
 
 #[derive(Parser, Debug)]
@@ -54,7 +54,7 @@ fn resolve_tools_catalog_path() -> Result<std::path::PathBuf> {
 
 fn build_cli_toolbox() -> Result<CliToolbox> {
     let catalog_path = resolve_tools_catalog_path()?;
-    let catalog = ToolCatalog::open(&catalog_path).map_err(|e| {
+    let catalog = SondaToolCatalog::open(&catalog_path).map_err(|e| {
         anyhow::anyhow!(
             "failed to load tools catalog from {}: {e}",
             catalog_path.display()

@@ -453,7 +453,7 @@ mod tests {
     use moray_skillhub::SkillHub;
     use crate::skill_center::{SkillCenter, SkillDirKind, SkillDirSource};
     use crate::harness::{SondaSessionHarness, SondaToolRegistration};
-    use moray_extensions::ToolCatalog;
+    use crate::SondaToolCatalog;
     use moray_extensions::tools::{
         CalcTool, FileReadTool, FileWriteTool, ImageCreateTool, ImageEditTool, ShellTool,
         WebFetchTool, WebSearchTool,
@@ -1040,8 +1040,8 @@ description = "image_edit"
 parameters = '{}'
 "#;
 
-    fn testing_tools_catalog() -> ToolCatalog {
-        ToolCatalog::from_str(TESTING_TOOLS_CATALOG_TOML).expect("testing tools catalog")
+    fn testing_tools_catalog() -> SondaToolCatalog {
+        SondaToolCatalog::from_str(TESTING_TOOLS_CATALOG_TOML).expect("testing tools catalog")
     }
 
     fn testing_shell_env() -> Vec<(String, String)> {

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::SondaToolCatalogError;
 use moray_core::MorayError;
 use thiserror::Error;
 
@@ -37,7 +38,7 @@ pub enum SondaError {
     ChannelCatalog(#[from] ChannelCatalogError),
 
     #[error(transparent)]
-    ToolCatalog(#[from] moray_extensions::ToolCatalogError),
+    ToolCatalog(#[from] SondaToolCatalogError),
 }
 
 impl From<crate::transcripts::SondaSessionTranscriptsError> for SondaError {

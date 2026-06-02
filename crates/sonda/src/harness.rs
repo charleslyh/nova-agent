@@ -4,15 +4,13 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use moray_extensions::ToolCatalog;
 use moray_extensions::completions::{Endpoint, OpenAIChatCompletion};
 use moray_core::{ChatCompletion, Tool, ToolCallAuthorizer, ToolboxBuilder};
 use moray_session::{Harness, SessionError};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{InvalidContent, Result, SondaError};
-use crate::session_catalog::SondaSessionCatalog;
-use crate::settings_store::SondaSettingsStore;
+use crate::{SondaSessionCatalog, SondaSettingsStore, SondaToolCatalog};
 
 /// Public catalog row for settings UI (`GET /settings/catalog`).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -50,7 +48,7 @@ pub struct SondaSessionHarness {
     settings_store: Arc<SondaSettingsStore>,
     session_catalog: Arc<SondaSessionCatalog>,
     authorizer: Arc<dyn ToolCallAuthorizer>,
-    catalog: ToolCatalog,
+    catalog: SondaToolCatalog,
     sessions_dir: PathBuf,
     registrations: Vec<SondaToolRegistration>,
 }
@@ -60,7 +58,7 @@ impl SondaSessionHarness {
         settings_store: Arc<SondaSettingsStore>,
         session_catalog: Arc<SondaSessionCatalog>,
         authorizer: Arc<dyn ToolCallAuthorizer>,
-        catalog: ToolCatalog,
+        catalog: SondaToolCatalog,
         sessions_dir: impl Into<PathBuf>,
         registrations: Vec<SondaToolRegistration>,
     ) -> Result<Self> {

@@ -87,20 +87,21 @@ impl SondaSessionCatalog {
         self.data.read().entries.clone()
     }
 
-    pub fn add_session_entry(&self, session_id: &str, name: &str) -> Result<()> {
+    pub fn add_session_entry(&self, session_id: &str, name: &str) -> Result<String> {
         let session_id = require_nonempty_trimmed(session_id, "session_id")?;
         let name = require_nonempty_trimmed(&session_name_from_input(name), "name")?;
         let mut inner = self.data.write();
-        if !inner.entries.iter().any(|e| e.session_id == session_id) {
-            inner.entries.push(SessionCatalogEntry {
-                session_id,
-                name,
-                agent_id: None,
-            });
-            drop(inner);
-            save(self)?;
+        if let Some(existing) = inner.entries.iter().find(|e| e.session_id == session_id) {
+            return Ok(existing.name.clone());
         }
-        Ok(())
+        inner.entries.push(SessionCatalogEntry {
+            session_id,
+            name: name.clone(),
+            agent_id: None,
+        });
+        drop(inner);
+        save(self)?;
+        Ok(name)
     }
 
     pub fn remove_session_entry(&self, session_id: &str) -> Result<()> {
