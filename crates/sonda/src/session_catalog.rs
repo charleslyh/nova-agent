@@ -99,8 +99,7 @@ impl SondaSessionCatalog {
             name: name.clone(),
             agent_id: None,
         });
-        drop(inner);
-        save(self)?;
+        save_locked(self, &inner)?;
         Ok(name)
     }
 
@@ -115,8 +114,7 @@ impl SondaSessionCatalog {
                     .into(),
             );
         }
-        drop(inner);
-        save(self)?;
+        save_locked(self, &inner)?;
         Ok(())
     }
 
@@ -135,30 +133,22 @@ impl SondaSessionCatalog {
     ) -> Result<()> {
         let session_id = require_nonempty_trimmed(session_id, "session_id")?;
         let agent_id = require_nonempty_trimmed(agent_id, "agent_id")?;
+        let mut inner = self.data.write();
+        let default_agent_id = inner.default_agent_id.clone();
+        let e = inner
+            .entries
+            .iter_mut()
+            .find(|e| e.session_id == session_id)
+            .ok_or_else(|| {
+                MissingReference::new(format!("no [[entries]] row for session_id `{session_id}`"))
+            })?;
 
-        let default_agent_id = {
-            let inner = self.data.read();
-            inner.default_agent_id.clone()
-        };
-
-        ensure_session_row(self, &session_id)?;
-
-        {
-            let mut inner = self.data.write();
-            let e = inner
-                .entries
-                .iter_mut()
-                .find(|e| e.session_id == session_id)
-                .expect("row checked by ensure_session_row");
-
-            if agent_id == default_agent_id {
-                e.agent_id = None;
-            } else {
-                e.agent_id = Some(agent_id);
-            }
+        if agent_id == default_agent_id {
+            e.agent_id = None;
+        } else {
+            e.agent_id = Some(agent_id);
         }
-
-        save(self)?;
+        save_locked(self, &inner)?;
         Ok(())
     }
 
@@ -216,13 +206,12 @@ fn entry_persists_on_disk(entry: &SessionCatalogEntry, default_agent_id: &str) -
     }
 }
 
-fn save(catalog: &SondaSessionCatalog) -> Result<()> {
+fn save_locked(catalog: &SondaSessionCatalog, inner: &SessionsData) -> Result<()> {
     let path = catalog.file_path.as_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|source| FileIoError::new("mkdir", parent.to_path_buf(), source))?;
     }
-    let inner = catalog.data.read();
     let to_write = SessionsData {
         default_agent_id: inner.default_agent_id.clone(),
         entries: inner
@@ -232,7 +221,6 @@ fn save(catalog: &SondaSessionCatalog) -> Result<()> {
             .cloned()
             .collect(),
     };
-    drop(inner);
 
     let s = toml::to_string_pretty(&to_write).map_err(|e| {
         InvalidContent::new(format!("invalid sessions file: {e}"))
