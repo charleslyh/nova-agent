@@ -94,18 +94,23 @@ impl SondaSessionCatalog {
         if let Some(existing) = inner.entries.iter().find(|e| e.session_id == session_id) {
             return Ok(existing.name.clone());
         }
-        inner.entries.push(SessionCatalogEntry {
+        let new_entry = SessionCatalogEntry {
             session_id,
             name: name.clone(),
             agent_id: None,
-        });
-        save_locked(self, &inner)?;
+        };
+        inner.entries.push(new_entry);
+        if let Err(err) = save_locked(self, &inner) {
+            inner.entries.pop();
+            return Err(err);
+        }
         Ok(name)
     }
 
     pub fn remove_session_entry(&self, session_id: &str) -> Result<()> {
         let session_id = require_nonempty_trimmed(session_id, "session_id")?;
         let mut inner = self.data.write();
+        let previous_entries = inner.entries.clone();
         let before = inner.entries.len();
         inner.entries.retain(|e| e.session_id != session_id);
         if inner.entries.len() == before {
@@ -114,7 +119,10 @@ impl SondaSessionCatalog {
                     .into(),
             );
         }
-        save_locked(self, &inner)?;
+        if let Err(err) = save_locked(self, &inner) {
+            inner.entries = previous_entries;
+            return Err(err);
+        }
         Ok(())
     }
 
@@ -135,20 +143,24 @@ impl SondaSessionCatalog {
         let agent_id = require_nonempty_trimmed(agent_id, "agent_id")?;
         let mut inner = self.data.write();
         let default_agent_id = inner.default_agent_id.clone();
-        let e = inner
+        let index = inner
             .entries
-            .iter_mut()
-            .find(|e| e.session_id == session_id)
+            .iter()
+            .position(|e| e.session_id == session_id)
             .ok_or_else(|| {
                 MissingReference::new(format!("no [[entries]] row for session_id `{session_id}`"))
             })?;
+        let previous_agent_id = inner.entries[index].agent_id.clone();
 
         if agent_id == default_agent_id {
-            e.agent_id = None;
+            inner.entries[index].agent_id = None;
         } else {
-            e.agent_id = Some(agent_id);
+            inner.entries[index].agent_id = Some(agent_id);
         }
-        save_locked(self, &inner)?;
+        if let Err(err) = save_locked(self, &inner) {
+            inner.entries[index].agent_id = previous_agent_id;
+            return Err(err);
+        }
         Ok(())
     }
 
