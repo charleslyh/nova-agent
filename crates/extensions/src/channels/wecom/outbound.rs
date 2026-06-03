@@ -324,6 +324,8 @@ impl WeComSessionOutbound {
                     if *status == ToolCallStatus::Canceled {
                         state.tool_outputs.remove(&call_id);
                         state.tool_displays.remove(&call_id);
+                        state.pending_auth.remove(&call_id);
+                        state.auth_prompted.remove(&call_id);
                         return;
                     }
                     let is_error = *status == ToolCallStatus::Error;
@@ -349,6 +351,8 @@ impl WeComSessionOutbound {
                         let mut state = self.state.lock().await;
                         state.tool_outputs.clear();
                         state.tool_displays.clear();
+                        state.pending_auth.clear();
+                        state.auth_prompted.clear();
                     }
                     _ => {}
                 }

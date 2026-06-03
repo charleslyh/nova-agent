@@ -913,6 +913,20 @@ mod tests {
         panic!("tool call stream closed before Started for {call_id}");
     }
 
+    async fn drain_receiver(mut rx: mpsc::Receiver<ToolCallEvent>) -> Vec<ToolCallEvent> {
+        let mut out = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            out.push(ev);
+        }
+        out
+    }
+
+    async fn drain_into(rx: &mut mpsc::Receiver<ToolCallEvent>, buffer: &mut Vec<ToolCallEvent>) {
+        while let Some(ev) = rx.recv().await {
+            buffer.push(ev);
+        }
+    }
+
     #[tokio::test]
     async fn ask_user_allowed_emits_requested_then_permission_then_started_then_finished() {
         let policy = Arc::new(AskUserPolicy::new());
@@ -1099,7 +1113,7 @@ mod tests {
         let policy = Arc::new(AskUserPolicy::new());
         let policy_obj: Arc<dyn ToolCallAuthorizer> = policy.clone();
         let tb_arc = Arc::new(make_toolbox(policy_obj));
-        let (sink, mut rx) = MpscToolCallEventSink::pair(16);
+        let (sink, rx) = MpscToolCallEventSink::pair(16);
         let group = tb_arc
             .begin_group(sink, turn.clone())
             .await;
@@ -1114,13 +1128,7 @@ mod tests {
             )
             .await
             .expect("start call");
-        let collect_fut = tokio::spawn(async move {
-            let mut out = Vec::new();
-            while let Some(ev) = rx.recv().await {
-                out.push(ev);
-            }
-            out
-        });
+        let collect_fut = tokio::spawn(drain_receiver(rx));
         await_pending(policy.as_ref(), "cx").await;
         turn.cancel();
         let (events, end_result) =
@@ -1167,11 +1175,7 @@ mod tests {
         let mut events = Vec::new();
         recv_until_started(&mut rx, "cy", &mut events).await;
         turn.cancel();
-        let drain = async {
-            while let Some(ev) = rx.recv().await {
-                events.push(ev);
-            }
-        };
+        let drain = drain_into(&mut rx, &mut events);
         let (_, end_result) = tokio::join!(drain, tb_arc.end_group(group));
         end_result.expect("end group");
         assert!(events.iter().any(|ev| matches!(

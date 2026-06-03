@@ -184,7 +184,7 @@ const imageCreateMediaMode = computed(() => {
 });
 
 function trimResultRaw(raw) {
-  if (raw == null) return "";
+  if (raw === null || raw === undefined) return "";
   return String(raw).trim();
 }
 

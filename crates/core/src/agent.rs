@@ -321,18 +321,13 @@ async fn react_once(
             ChatCompletionResponseChunk::ToolCall(tool_call) => {
                 debug!(call_id = %tool_call.call_id, tool = %tool_call.name, "received tool call chunk");
 
-                if tool_call_group.is_none() {
+                let group = if let Some(id) = tool_call_group {
+                    id
+                } else {
                     let sink = Arc::new(AgentToolCallEventSink { tx: tx.clone() });
-                    tool_call_group =
-                        Some(toolbox.begin_group(sink, cancellation.clone()).await);
-                }
-
-                let Some(group) = tool_call_group else {
-                    warn!("tool call chunk arrived before group was started");
-                    loop_exit = Some(AgentFinishKind::Failed {
-                        reason: "internal error: tool call group not initialized".to_string(),
-                    });
-                    break 'completion;
+                    let id = toolbox.begin_group(sink, cancellation.clone()).await;
+                    tool_call_group = Some(id);
+                    id
                 };
 
                 if let Err(e) = toolbox.call_tool(group, tool_call).await {

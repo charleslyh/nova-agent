@@ -230,25 +230,27 @@ mod tests {
     }
 
     fn assert_user_message(messages: &[ChatCompletionRequestMessage], index: usize, content: &str) {
+        let got = messages.get(index);
         assert!(
             matches!(
-                &messages[index],
-                ChatCompletionRequestMessage::User { content: c } if c == content
+                got,
+                Some(ChatCompletionRequestMessage::User { content: c }) if c == content
             ),
-            "expected User {{ content: {content:?} }} at index {index}, got {:?}",
-            messages.get(index)
+            "expected User {{ content: {content:?} }} at index {index}, got {got:?}"
         );
     }
 
     fn assert_assistant_text(messages: &[ChatCompletionRequestMessage], index: usize, text: &str) {
+        let got = messages.get(index);
         assert!(
             matches!(
-                &messages[index],
-                ChatCompletionRequestMessage::Assistant { content, tool_calls: None }
-                    if content == text
+                got,
+                Some(ChatCompletionRequestMessage::Assistant {
+                    content,
+                    tool_calls: None
+                }) if content == text
             ),
-            "expected Assistant text {text:?} at index {index}, got {:?}",
-            messages.get(index)
+            "expected Assistant text {text:?} at index {index}, got {got:?}"
         );
     }
 
@@ -258,16 +260,18 @@ mod tests {
         call_id: &str,
         name: &str,
     ) {
+        let got = messages.get(index);
         assert!(
             matches!(
-                &messages[index],
-                ChatCompletionRequestMessage::Assistant { tool_calls: Some(calls), .. }
-                    if calls.len() == 1
-                        && calls[0].call_id == call_id
-                        && calls[0].name == name
+                got,
+                Some(ChatCompletionRequestMessage::Assistant {
+                    tool_calls: Some(calls),
+                    ..
+                }) if calls.len() == 1
+                    && calls[0].call_id == call_id
+                    && calls[0].name == name
             ),
-            "expected Assistant tool_calls [{call_id}/{name}] at index {index}, got {:?}",
-            messages.get(index)
+            "expected Assistant tool_calls [{call_id}/{name}] at index {index}, got {got:?}"
         );
     }
 
@@ -277,14 +281,16 @@ mod tests {
         call_id: &str,
         content: &str,
     ) {
+        let got = messages.get(index);
         assert!(
             matches!(
-                &messages[index],
-                ChatCompletionRequestMessage::Tool { call_id: id, content: c }
-                    if id == call_id && c == content
+                got,
+                Some(ChatCompletionRequestMessage::Tool {
+                    call_id: id,
+                    content: c
+                }) if id == call_id && c == content
             ),
-            "expected Tool {{ call_id: {call_id}, content: {content:?} }} at index {index}, got {:?}",
-            messages.get(index)
+            "expected Tool {{ call_id: {call_id}, content: {content:?} }} at index {index}, got {got:?}"
         );
     }
 
