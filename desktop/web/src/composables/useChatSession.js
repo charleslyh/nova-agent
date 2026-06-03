@@ -194,6 +194,62 @@ export function useChatSession() {
     return item;
   }
 
+  const TOOL_CALL_DENIED_BY_USER = "This tool call was denied by the user.";
+
+  function handleToolCallAgentEvent(agentEv) {
+    if (agentEv?.type !== "tool_call" || !agentEv.event) return;
+    const ev = agentEv.event;
+    const callId = ev.call_id;
+    const phase = ev.type;
+    if (!isNonEmptyString(callId) || !phase) return;
+
+    switch (phase) {
+      case "requested":
+        ensureToolCard(callId, {
+          toolName: ev.name,
+          arguments: ev.arguments ?? ""
+        });
+        break;
+      case "extra": {
+        const card = ensureToolCard(callId);
+        if (card) {
+          card.authState = "blocked";
+          card.awaitAuthAction = true;
+        }
+        break;
+      }
+      case "started": {
+        const card = ensureToolCard(callId);
+        if (card) {
+          card.authState = card.authState === "blocked" ? "granted" : "not_required";
+          card.awaitAuthAction = false;
+          card.status = "running";
+        }
+        break;
+      }
+      case "payload": {
+        const card = ensureToolCard(callId);
+        if (card && ev.text != null && ev.text !== "") {
+          card.result = (card.result ?? "") + ev.text;
+        }
+        break;
+      }
+      case "finished": {
+        const card = ensureToolCard(callId);
+        if (!card) break;
+        card.awaitAuthAction = false;
+        card.status = ev.status === "error" ? "error" : "success";
+        if (card.result === TOOL_CALL_DENIED_BY_USER) {
+          card.authState = "denied";
+          card.authDecision = false;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
   function clearToolCardState() {
     toolCardsByCallId.clear();
   }
@@ -250,41 +306,7 @@ export function useChatSession() {
           arguments: agentEv.chunk.arguments
         });
       }
-      if (agentEv?.type === "tool_call" && agentEv.event?.type === "requested") {
-        const req = agentEv.event.content ?? {};
-        ensureToolCard(req.call_id, {
-          toolName: req.name,
-          arguments: req.arguments
-        });
-      }
-      if (agentEv?.type === "tool_call" && agentEv.event?.type === "custom") {
-        const card = ensureToolCard(agentEv.event.call_id);
-        if (card) {
-          card.authState = "blocked";
-          card.awaitAuthAction = true;
-        }
-      }
-      if (agentEv?.type === "tool_call" && agentEv.event?.type === "started") {
-        const card = ensureToolCard(agentEv.event.call_id);
-        if (card) {
-          card.authState = card.authState === "blocked" ? "granted" : "not_required";
-          card.awaitAuthAction = false;
-          card.status = "running";
-        }
-      }
-      if (agentEv?.type === "tool_call" && agentEv.event?.type === "completed") {
-        const done = agentEv.event.content ?? {};
-        const card = ensureToolCard(done.call_id);
-        if (card) {
-          card.awaitAuthAction = false;
-          card.status = done.status ?? "completed";
-          card.result = done.content ?? "";
-          if (done.content === "This tool call was denied by the user.") {
-            card.authState = "denied";
-            card.authDecision = false;
-          }
-        }
-      }
+      handleToolCallAgentEvent(agentEv);
       if (agentEv?.type === "finished") {
         if (isFinishedCanceled(agentEv.kind)) {
           push("assistant", "（已停止生成）");

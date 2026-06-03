@@ -8,7 +8,7 @@ use axum::{Json, Router};
 use moray_sonda::{Sonda, SondaToolCatalogEntry};
 use serde::Serialize;
 
-use crate::error::toolbox_error_response;
+use crate::error::tool_call_auth_error_response;
 
 #[rustfmt::skip]
 pub(super) fn router() -> Router<Arc<Sonda>> {
@@ -44,6 +44,6 @@ async fn tools_reply_auth(
 
     match result {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => toolbox_error_response(e),
+        Err(e) => tool_call_auth_error_response(e),
     }
 }

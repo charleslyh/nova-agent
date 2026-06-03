@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use moray_core::{MorayError, TypedTool};
+use moray_core::{MorayError, ToolCallResponder, TypedTool};
 use serde::Deserialize;
 
 use super::util::path::resolve_path;
@@ -28,7 +28,11 @@ impl TypedTool for FileReadTool {
     type Args = FileReadArgs;
     const NAME: &'static str = "file_read";
 
-    async fn run(&self, args: FileReadArgs) -> Result<String, MorayError> {
+    async fn run(
+        &self,
+        args: FileReadArgs,
+        responder: &dyn ToolCallResponder,
+    ) -> Result<(), MorayError> {
         let path = resolve_path(&self.cwd, &args.path);
         let content = tokio::fs::read_to_string(&path)
             .await
@@ -36,7 +40,8 @@ impl TypedTool for FileReadTool {
 
         let lines: Vec<&str> = content.lines().collect();
         if lines.is_empty() {
-            return Ok("File is empty.".to_string());
+            responder.send_text("File is empty.".to_string()).await;
+            return Ok(());
         }
 
         let total = lines.len();
@@ -51,7 +56,10 @@ impl TypedTool for FileReadTool {
         };
 
         if start >= end {
-            return Ok(format!("[No lines in range, file has {total} lines]"));
+            responder
+                .send_text(format!("[No lines in range, file has {total} lines]"))
+                .await;
+            return Ok(());
         }
 
         let output = lines[start..end]
@@ -60,6 +68,7 @@ impl TypedTool for FileReadTool {
             .map(|(i, line)| format!("{}|{}", start + i + 1, line))
             .collect::<Vec<_>>()
             .join("\n");
-        Ok(output)
+        responder.send_text(output).await;
+        Ok(())
     }
 }

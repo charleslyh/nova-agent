@@ -433,11 +433,6 @@ impl SkillCenter {
 }
 
 #[cfg(test)]
-pub(crate) fn empty_skill_center() -> SkillCenter {
-    SkillCenter::load(Vec::<SkillDirSource>::new()).unwrap()
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;

@@ -2,9 +2,11 @@
 
 use moray_core::{
     AgentResponseEvent, ChatCompletionFinishReason, ChatCompletionRequestMessage,
-    ChatCompletionResponseChunk, ToolCallEvent, ToolCallRequest,
+    ChatCompletionResponseChunk, ToolCallEventKind, ToolCallRequest,
+    ToolCallStatus,
 };
 use moray_session::SessionEventKind;
+use std::collections::HashMap;
 
 use super::SondaSessionEventRecord;
 
@@ -17,6 +19,7 @@ pub fn replay_records(records: &[SondaSessionEventRecord]) -> SondaSessionSnapsh
     let mut messages = Vec::new();
     let mut pending_text = String::new();
     let mut pending_tools: Vec<ToolCallRequest> = Vec::new();
+    let mut tool_outputs: HashMap<String, String> = HashMap::new();
 
     for record in records {
         match &record.event.kind {
@@ -30,11 +33,18 @@ pub fn replay_records(records: &[SondaSessionEventRecord]) -> SondaSessionSnapsh
                 });
             }
             SessionEventKind::AgentResponse { agent } => {
-                fold_agent_event(agent, &mut messages, &mut pending_text, &mut pending_tools);
+                fold_agent_event(
+                    agent,
+                    &mut messages,
+                    &mut pending_text,
+                    &mut pending_tools,
+                    &mut tool_outputs,
+                );
             }
             SessionEventKind::Reset => {
                 pending_text.clear();
                 pending_tools.clear();
+                tool_outputs.clear();
                 messages.clear();
             }
             SessionEventKind::TurnFinish => {}
@@ -72,6 +82,7 @@ fn fold_agent_event(
     messages: &mut Vec<ChatCompletionRequestMessage>,
     pending_text: &mut String,
     pending_tools: &mut Vec<ToolCallRequest>,
+    tool_outputs: &mut HashMap<String, String>,
 ) {
     match agent_ev {
         AgentResponseEvent::Started => {}
@@ -112,15 +123,26 @@ fn fold_agent_event(
                 }
             }
         },
-        AgentResponseEvent::ToolCall { event } => match event {
-            ToolCallEvent::Requested { .. } => {}
-            ToolCallEvent::Custom { .. } => {}
-            ToolCallEvent::Started { .. } => {}
-            ToolCallEvent::Completed { content } => {
+        AgentResponseEvent::ToolCall { event } => match &event.kind {
+            ToolCallEventKind::Requested { .. } => {}
+            ToolCallEventKind::Extra { .. } => {}
+            ToolCallEventKind::Started => {}
+            ToolCallEventKind::Payload { text } => {
+                let acc = tool_outputs.entry(event.call_id.clone()).or_default();
+                acc.push_str(text);
+            }
+            ToolCallEventKind::Finished { status } => {
                 flush_pending_assistant(messages, pending_text, pending_tools);
+                let call_id = event.call_id.clone();
+                let content = tool_outputs.remove(&call_id).unwrap_or_default();
+                let content = if *status == ToolCallStatus::Error && content.is_empty() {
+                    "tool call failed".to_string()
+                } else {
+                    content
+                };
                 messages.push(ChatCompletionRequestMessage::Tool {
-                    content: content.content.clone(),
-                    call_id: content.call_id.clone(),
+                    content,
+                    call_id,
                 });
             }
         },
@@ -131,7 +153,7 @@ fn fold_agent_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moray_core::{AgentFinishKind, ToolCallResult, ToolCallStatus};
+    use moray_core::{AgentFinishKind, ToolCallEvent, ToolCallStatus};
     use moray_session::{SessionEvent, SessionEventKind, TurnInput};
 
     fn record(seq: u64, kind: SessionEventKind) -> SondaSessionEventRecord {
@@ -190,13 +212,13 @@ mod tests {
 
     fn tcf(call_id: &str, content: &str) -> AgentResponseEvent {
         AgentResponseEvent::ToolCall {
-            event: ToolCallEvent::Completed {
-                content: ToolCallResult {
-                    call_id: call_id.into(),
-                    content: content.into(),
-                    status: ToolCallStatus::Success,
-                },
-            },
+            event: ToolCallEvent::payload(call_id.into(), content.into()),
+        }
+    }
+
+    fn tff(call_id: &str, status: ToolCallStatus) -> AgentResponseEvent {
+        AgentResponseEvent::ToolCall {
+            event: ToolCallEvent::finished(call_id.into(), status),
         }
     }
 
@@ -244,6 +266,7 @@ mod tests {
             agent(3, tc("c1", "echo", "{}")),
             agent(4, done_stop()),
             agent(5, tcf("c1", "ok")),
+            agent(6, tff("c1", ToolCallStatus::Success)),
         ];
         let s = replay_records(&records);
         assert_eq!(s.messages.len(), 3);

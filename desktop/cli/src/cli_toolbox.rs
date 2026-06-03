@@ -4,10 +4,26 @@
 //! Per-session assembly lives in [`moray_sonda::SondaSessionHarness`].
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
 
-use moray_core::{parse_tool_call_args, MorayError, Tool, ToolManifest};
+use async_trait::async_trait;
+use moray_core::{parse_tool_call_args, MorayError, Tool, ToolCallResponder, ToolManifest};
 use moray_sonda::SondaToolCatalog;
+use serde_json::Value;
+
+/// Writes model-visible tool output to stdout as it arrives.
+struct PrintingResponder;
+
+#[async_trait]
+impl ToolCallResponder for PrintingResponder {
+    async fn send_extra(&self, _: Value) {}
+
+    async fn send_text(&self, text: String) {
+        print!("{text}");
+        let _ = std::io::stdout().flush();
+    }
+}
 
 /// Tools exposed by this `moray-cli` binary (catalog metadata + runnable instances).
 ///
@@ -82,19 +98,20 @@ impl CliToolbox {
         }
     }
 
-    pub async fn run(&self, name: &str, arguments: &str) -> Result<String, MorayError> {
+    pub async fn run(&self, name: &str, arguments: &str) -> Result<(), MorayError> {
         let Some(tool) = self.tools.get(name) else {
             return Err(MorayError::Message(format!("unknown tool {name}")));
         };
         let args = parse_tool_call_args(arguments);
-        tool.call(args).await
+        tool.call(args, &PrintingResponder).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use moray_core::TypedTool;
+    use moray_core::{ToolCallResponder, TypedTool};
+    use moray_sonda::SondaToolCatalog;
     use std::sync::Arc;
 
     use super::CliToolbox;
@@ -119,8 +136,13 @@ parameters = '{}'
     impl TypedTool for BetaTool {
         type Args = serde_json::Value;
         const NAME: &'static str = "beta";
-        async fn run(&self, _: serde_json::Value) -> Result<String, moray_core::MorayError> {
-            Ok("beta".into())
+        async fn run(
+            &self,
+            _: serde_json::Value,
+            responder: &dyn ToolCallResponder,
+        ) -> Result<(), moray_core::MorayError> {
+            responder.send_text("beta".into()).await;
+            Ok(())
         }
     }
 
@@ -129,8 +151,13 @@ parameters = '{}'
     impl TypedTool for AlphaTool {
         type Args = serde_json::Value;
         const NAME: &'static str = "alpha";
-        async fn run(&self, _: serde_json::Value) -> Result<String, moray_core::MorayError> {
-            Ok("alpha".into())
+        async fn run(
+            &self,
+            _: serde_json::Value,
+            responder: &dyn ToolCallResponder,
+        ) -> Result<(), moray_core::MorayError> {
+            responder.send_text("alpha".into()).await;
+            Ok(())
         }
     }
 
@@ -139,8 +166,13 @@ parameters = '{}'
     impl TypedTool for GammaTool {
         type Args = serde_json::Value;
         const NAME: &'static str = "gamma";
-        async fn run(&self, _: serde_json::Value) -> Result<String, moray_core::MorayError> {
-            Ok("gamma".into())
+        async fn run(
+            &self,
+            _: serde_json::Value,
+            responder: &dyn ToolCallResponder,
+        ) -> Result<(), moray_core::MorayError> {
+            responder.send_text("gamma".into()).await;
+            Ok(())
         }
     }
 
@@ -184,8 +216,13 @@ parameters = '{}'
         impl TypedTool for OtherTool {
             type Args = serde_json::Value;
             const NAME: &'static str = "other";
-            async fn run(&self, _: serde_json::Value) -> Result<String, moray_core::MorayError> {
-                Ok("ok".into())
+            async fn run(
+                &self,
+                _: serde_json::Value,
+                responder: &dyn ToolCallResponder,
+            ) -> Result<(), moray_core::MorayError> {
+                responder.send_text("ok".into()).await;
+                Ok(())
             }
         }
 

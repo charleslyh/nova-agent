@@ -27,7 +27,7 @@ pub struct ToolManifest {
 ///
 /// Aligns with OpenAI Chat Completions `function.arguments`: a JSON object **string**, not a parsed value.
 /// Produced by completion adapters when finalizing a model round, and by [`Toolbox::call_tool`] for
-/// [`ToolCallEvent::Requested`].
+/// [`ToolCallEventKind::Requested`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ToolCallRequest {

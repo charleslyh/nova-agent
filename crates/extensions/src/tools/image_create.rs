@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use moray_core::{MorayError, TypedTool};
+use moray_core::{MorayError, ToolCallResponder, TypedTool};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::time::Duration;
@@ -26,7 +26,11 @@ impl TypedTool for ImageCreateTool {
     type Args = ImageCreateArgs;
     const NAME: &'static str = "image_create";
 
-    async fn run(&self, args: ImageCreateArgs) -> Result<String, MorayError> {
+    async fn run(
+        &self,
+        args: ImageCreateArgs,
+        responder: &dyn ToolCallResponder,
+    ) -> Result<(), MorayError> {
         let query = args.query.trim();
         if query.is_empty() {
             return Err(MorayError::Message("image_create: query is empty".into()));
@@ -66,13 +70,27 @@ impl TypedTool for ImageCreateTool {
         let body = response.text().await.map_err(|e| {
             MorayError::Message(format!("image_create: failed to read response body: {e}"))
         })?;
-        Ok(sanitize_image_api_response(&body))
+        responder
+            .send_text(sanitize_image_api_response(&body))
+            .await;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use moray_core::ToolCallResponder;
+
+    struct NoopResponder;
+
+    #[async_trait]
+    impl ToolCallResponder for NoopResponder {
+        async fn send_extra(&self, _: serde_json::Value) {}
+
+        async fn send_text(&self, _: String) {}
+    }
 
     #[test]
     fn default_aspect_ratio_when_omitted() {
@@ -85,10 +103,13 @@ mod tests {
     async fn rejects_empty_query() {
         let tool = ImageCreateTool;
         let err = tool
-            .run(ImageCreateArgs {
-                query: "   ".into(),
-                aspect_ratio: "1:1".into(),
-            })
+            .run(
+                ImageCreateArgs {
+                    query: "   ".into(),
+                    aspect_ratio: "1:1".into(),
+                },
+                &NoopResponder,
+            )
             .await
             .expect_err("empty query");
         assert!(err.to_string().contains("query is empty"));

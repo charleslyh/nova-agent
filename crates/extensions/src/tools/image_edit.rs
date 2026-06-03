@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use moray_core::{MorayError, TypedTool};
+use moray_core::{MorayError, ToolCallResponder, TypedTool};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::time::Duration;
@@ -33,7 +33,11 @@ impl TypedTool for ImageEditTool {
     type Args = ImageEditArgs;
     const NAME: &'static str = "image_edit";
 
-    async fn run(&self, args: ImageEditArgs) -> Result<String, MorayError> {
+    async fn run(
+        &self,
+        args: ImageEditArgs,
+        responder: &dyn ToolCallResponder,
+    ) -> Result<(), MorayError> {
         let prompt = args.prompt.trim();
         if prompt.is_empty() {
             return Err(MorayError::Message("image_edit: prompt is empty".into()));
@@ -83,22 +87,39 @@ impl TypedTool for ImageEditTool {
         let body = response.text().await.map_err(|e| {
             MorayError::Message(format!("image_edit: failed to read response body: {e}"))
         })?;
-        Ok(sanitize_image_api_response(&body))
+        responder
+            .send_text(sanitize_image_api_response(&body))
+            .await;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use moray_core::ToolCallResponder;
+
+    struct NoopResponder;
+
+    #[async_trait]
+    impl ToolCallResponder for NoopResponder {
+        async fn send_extra(&self, _: serde_json::Value) {}
+
+        async fn send_text(&self, _: String) {}
+    }
 
     #[tokio::test]
     async fn rejects_empty_prompt() {
         let tool = ImageEditTool::new(std::env::temp_dir());
         let err = tool
-            .run(ImageEditArgs {
-                prompt: "   ".into(),
-                image_uri: "https://example.com/img.png".into(),
-            })
+            .run(
+                ImageEditArgs {
+                    prompt: "   ".into(),
+                    image_uri: "https://example.com/img.png".into(),
+                },
+                &NoopResponder,
+            )
             .await
             .expect_err("empty prompt");
         assert!(err.to_string().contains("prompt is empty"));
@@ -108,10 +129,13 @@ mod tests {
     async fn rejects_empty_image_uri() {
         let tool = ImageEditTool::new(std::env::temp_dir());
         let err = tool
-            .run(ImageEditArgs {
-                prompt: "make it blue".into(),
-                image_uri: "  ".into(),
-            })
+            .run(
+                ImageEditArgs {
+                    prompt: "make it blue".into(),
+                    image_uri: "  ".into(),
+                },
+                &NoopResponder,
+            )
             .await
             .expect_err("empty image_uri");
         assert!(err.to_string().contains("image_uri is empty"));

@@ -126,15 +126,10 @@ async fn handle_tool(toolbox: &CliToolbox, cmd: ToolCommand) -> Result<()> {
         }
         ToolCommand::Run { name, args } => {
             let arguments = parse_tool_args(args)?;
-            match toolbox.run(&name, &arguments).await {
-                Ok(output) => {
-                    if !output.is_empty() {
-                        println!("{output}");
-                    }
-                    Ok(())
-                }
-                Err(e) => bail!("Tool '{name}' failed: {e}"),
-            }
+            toolbox
+                .run(&name, &arguments)
+                .await
+                .map_err(|e| anyhow::anyhow!("Tool '{name}' failed: {e}"))
         }
     }
 }

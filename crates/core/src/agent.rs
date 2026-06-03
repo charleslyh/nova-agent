@@ -1,8 +1,7 @@
-use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use futures::stream::select_all;
+use async_trait::async_trait;
 use futures::Stream;
 use futures::StreamExt;
 #[cfg(feature = "serde")]
@@ -10,16 +9,15 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, instrument, warn, Instrument};
+use tracing::{debug, info, warn, Instrument};
 
 use crate::completion::{
     ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,
     ChatCompletionResponseChunk,
 };
 use crate::context::ContextEngine;
-use crate::toolbox::{ToolCallEvent, Toolbox};
+use crate::toolbox::{ToolCallEvent, ToolCallEventSink, ToolCallGroupId, Toolbox};
 use crate::types::MorayError;
-use crate::types::{ToolCallRequest, ToolCallResult};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -39,11 +37,6 @@ pub enum AgentFinishKind {
     },
 }
 
-/// Keeps the run stream narrowly scoped so transport and UI layers can
-/// remain stable even when internals evolve.
-///
-/// `Eq` is intentionally not derived because `ToolCallEvent::Custom`
-/// can contain `serde_json::Value`, which is not `Eq`.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
@@ -90,7 +83,7 @@ async fn agent_run_impl(
 ) {
     if let Err(e) = context.bootstrap().await {
         warn!(error = %e, "context bootstrap failed");
-        resposne(
+        emit_event(
             &tx,
             AgentResponseEvent::Finished {
                 kind: AgentFinishKind::Failed {
@@ -134,7 +127,7 @@ async fn agent_run_impl(
         debug!("teardown completed");
     }
 
-    resposne(&tx, AgentResponseEvent::Finished { kind: exit_kind });
+    emit_event(&tx, AgentResponseEvent::Finished { kind: exit_kind });
     info!("finished");
 }
 
@@ -218,56 +211,33 @@ impl AgentRequestBuilder {
 }
 
 fn empty_toolbox() -> Arc<Toolbox> {
-    Arc::new(Toolbox::new(HashMap::new(), Vec::new(), None))
+    Arc::new(Toolbox::new(
+        std::collections::HashMap::new(),
+        Vec::new(),
+        None,
+    ))
 }
 
-fn resposne(tx: &UnboundedSender<AgentResponseEvent>, ev: AgentResponseEvent) {
+fn emit_event(tx: &UnboundedSender<AgentResponseEvent>, ev: AgentResponseEvent) {
     let _ = tx.send(ev);
 }
 
-/// Groups tool streams so execution stays concurrent while emissions remain
-/// ordered through one forwarding path.
-struct ToolCallGroup {
-    toolbox: Arc<Toolbox>,
+struct AgentToolCallEventSink {
     tx: UnboundedSender<AgentResponseEvent>,
-    merged: futures::stream::SelectAll<Pin<Box<dyn Stream<Item = ToolCallEvent> + Send>>>,
 }
 
-impl ToolCallGroup {
-    fn new(toolbox: Arc<Toolbox>, tx: UnboundedSender<AgentResponseEvent>) -> Self {
-        Self {
-            toolbox,
-            tx,
-            merged: select_all(Vec::new()),
-        }
+#[async_trait]
+impl ToolCallEventSink for AgentToolCallEventSink {
+    async fn emit(&self, ev: ToolCallEvent) -> bool {
+        self.tx
+            .send(AgentResponseEvent::ToolCall { event: ev })
+            .is_ok()
     }
+}
 
-    #[instrument(
-        name = "agent.spawn_tool_call",
-        level = "debug",
-        skip(self, tc),
-        fields(call_id = %tc.call_id, tool = %tc.name)
-    )]
-    fn spawn_tool_call(&mut self, tc: ToolCallRequest) {
-        debug!("spawned");
-        let stream = Arc::clone(&self.toolbox).call_tool(&tc.call_id, &tc.name, &tc.arguments);
-        self.merged.push(stream);
-    }
-
-    #[instrument(name = "agent.join_tool_calls", level = "debug", skip(self))]
-    async fn join(mut self) -> Vec<ToolCallResult> {
-        let mut results = Vec::new();
-
-        while let Some(tool_ev) = self.merged.next().await {
-            if let ToolCallEvent::Completed { content } = &tool_ev {
-                debug!(call_id = %content.call_id, "finished");
-                results.push(content.clone());
-            }
-
-            resposne(&self.tx, AgentResponseEvent::ToolCall { event: tool_ev });
-        }
-
-        results
+fn toolbox_err(kind: impl std::fmt::Display) -> AgentFinishKind {
+    AgentFinishKind::Failed {
+        reason: kind.to_string(),
     }
 }
 
@@ -302,11 +272,10 @@ async fn react_once(
         }
     };
 
-    resposne(tx, AgentResponseEvent::Started);
+    emit_event(tx, AgentResponseEvent::Started);
 
     let mut acc_text = String::new();
-    let mut acc_tool_calls: Vec<ToolCallRequest> = Vec::new();
-    let mut tool_call_group = ToolCallGroup::new(Arc::clone(toolbox), tx.clone());
+    let mut tool_call_group: Option<ToolCallGroupId> = None;
 
     loop {
         // Race cancellation with model chunks so shutdown latency is not coupled to provider chunk cadence or backpressure.
@@ -330,7 +299,7 @@ async fn react_once(
             }
         };
 
-        resposne(
+        emit_event(
             tx,
             AgentResponseEvent::CompletionResponse {
                 chunk: chunk.clone(),
@@ -344,10 +313,20 @@ async fn react_once(
             ChatCompletionResponseChunk::Think(_) => {}
             ChatCompletionResponseChunk::ThinkDone => {}
             ChatCompletionResponseChunk::TextDone => {}
-            ChatCompletionResponseChunk::ToolCall(tc) => {
-                debug!(call_id = %tc.call_id, tool = %tc.name, "received tool call chunk");
-                acc_tool_calls.push(tc.clone());
-                tool_call_group.spawn_tool_call(tc);
+            ChatCompletionResponseChunk::ToolCall(tool_call) => {
+                debug!(call_id = %tool_call.call_id, tool = %tool_call.name, "received tool call chunk");
+
+                if tool_call_group.is_none() {
+                    let sink = Arc::new(AgentToolCallEventSink { tx: tx.clone() });
+                    tool_call_group = Some(toolbox.begin_group(sink).await);
+                }
+
+                let group = tool_call_group.expect("group started on first tool call");
+                // TODO: 考虑错误恢复，例如根据 tool_call.name 找不到工具，arguments 格式错误等。以便增强 Agent 的健壮性。
+                if let Err(e) = toolbox.call_tool(group, tool_call).await
+                {
+                    return Err(toolbox_err(e));
+                }
             }
             ChatCompletionResponseChunk::Done { reason } => match reason {
                 ChatCompletionFinishReason::Refusal { reason } => {
@@ -368,24 +347,24 @@ async fn react_once(
         }
     }
 
-    if acc_tool_calls.is_empty() {
+    let Some(group) = tool_call_group else {
         debug!("finished without tool calls");
         return Ok(0);
-    }
-
-    let tool_results = tokio::select! {
-        _ = cancellation.cancelled() => return Err(AgentFinishKind::Canceled),
-        result = tool_call_group.join() => result,
     };
 
-    let nb_tool_calls = acc_tool_calls.len();
+    let (tool_call_requests, tool_call_results) = tokio::select! {
+        _ = cancellation.cancelled() => return Err(AgentFinishKind::Canceled),
+        result = toolbox.end_group(group) => result.map_err(toolbox_err)?,
+    };
+
+    let nb_tool_calls = tool_call_requests.len();
     info!(nb_tool_calls, "collected tool calls");
 
     let mut ingest_messages = vec![ChatCompletionRequestMessage::Assistant {
         content: acc_text,
-        tool_calls: (!acc_tool_calls.is_empty()).then_some(acc_tool_calls),
+        tool_calls: Some(tool_call_requests),
     }];
-    for result in tool_results {
+    for result in tool_call_results {
         ingest_messages.push(ChatCompletionRequestMessage::Tool {
             content: result.content,
             call_id: result.call_id,
@@ -399,6 +378,6 @@ async fn react_once(
         });
     }
 
-    debug!("ingest succeeded");
+    info!(nb_tool_calls, "react_once completed");
     Ok(nb_tool_calls)
 }

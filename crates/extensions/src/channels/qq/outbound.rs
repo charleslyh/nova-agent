@@ -3,7 +3,9 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use moray_core::{parse_tool_call_args, AgentFinishKind, AgentResponseEvent, ToolCallEvent};
+use moray_core::{
+    parse_tool_call_args, AgentFinishKind, AgentResponseEvent, ToolCallEventKind,
+};
 use moray_session::{SessionEvent, SessionEventKind};
 use tokio::sync::RwLock;
 
@@ -74,26 +76,30 @@ impl QqSessionOutbound {
                     self.handle_chunk(&text).await;
                 }
             }
-            AgentResponseEvent::ToolCall { event } => match event {
-                ToolCallEvent::Requested { content } => {
-                    let call_id = content.call_id.clone();
-                    let display = friendly_tool_label(&content.name, &content.name);
+            AgentResponseEvent::ToolCall { event } => match &event.kind {
+                ToolCallEventKind::Requested {
+                    name,
+                    arguments,
+                } => {
+                    let call_id = event.call_id.clone();
+                    let display = friendly_tool_label(&name, &name);
                     self.state.pending_auth.insert(
                         call_id.clone(),
                         PendingToolAuth {
-                            tool_name: content.name.clone(),
+                            tool_name: name.clone(),
                             display_name: display.clone(),
-                            arguments: parse_tool_call_args(&content.arguments),
+                            arguments: parse_tool_call_args(&arguments),
                         },
                     );
                     self.state.tool_displays.insert(call_id, display);
                 }
-                ToolCallEvent::Started { call_id } => {
-                    self.insert_tool_placeholder(call_id);
+                ToolCallEventKind::Started => {
+                    self.insert_tool_placeholder(&event.call_id);
                 }
-                ToolCallEvent::Completed { .. } => {}
-                ToolCallEvent::Custom { call_id, .. } => {
-                    self.handle_tool_auth(call_id).await;
+                ToolCallEventKind::Payload { .. } => {}
+                ToolCallEventKind::Finished { .. } => {}
+                ToolCallEventKind::Extra { .. } => {
+                    self.handle_tool_auth(&event.call_id).await;
                 }
             },
             AgentResponseEvent::Finished { kind } => {
@@ -152,7 +158,7 @@ impl QqSessionOutbound {
             return;
         }
         let Some(pending) = self.state.pending_auth.get(call_id).cloned() else {
-            tracing::warn!(call_id, "QQ tool auth Custom without prior Requested event");
+            tracing::warn!(call_id, "QQ tool auth Extra without prior Requested event");
             return;
         };
         self.state.auth_prompted.insert(call_id.to_string());

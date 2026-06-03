@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use moray_core::{MorayError, TypedTool};
+use moray_core::{MorayError, ToolCallResponder, TypedTool};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::time::Duration;
@@ -18,7 +18,11 @@ impl TypedTool for WebSearchTool {
     type Args = WebSearchArgs;
     const NAME: &'static str = "web_search";
 
-    async fn run(&self, args: WebSearchArgs) -> Result<String, MorayError> {
+    async fn run(
+        &self,
+        args: WebSearchArgs,
+        responder: &dyn ToolCallResponder,
+    ) -> Result<(), MorayError> {
         let query = args.query.trim();
         if query.is_empty() {
             return Err(MorayError::Message("web_search: query is empty".into()));
@@ -45,8 +49,10 @@ impl TypedTool for WebSearchTool {
                 body
             )));
         }
-        response.text().await.map_err(|e| {
+        let text = response.text().await.map_err(|e| {
             MorayError::Message(format!("web_search: failed to read response body: {e}"))
-        })
+        })?;
+        responder.send_text(text).await;
+        Ok(())
     }
 }

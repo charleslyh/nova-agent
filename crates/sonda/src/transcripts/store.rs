@@ -329,7 +329,7 @@ impl SessionLiveEvents for SondaSessionTranscripts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use moray_session::{SessionEvent, SessionEventKind, SessionEventSink, TurnInput};
+    use moray_session::{SessionEvent, SessionEventKind, TurnInput};
 
     fn wrap_user(content: &str) -> SessionEvent {
         SessionEvent {

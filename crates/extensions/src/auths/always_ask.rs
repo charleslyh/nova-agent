@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use moray_core::{ToolCallAuthorizer, ToolCallResponder, ToolboxError};
-use serde_json::Value;
+use std::sync::Arc;
+
+use moray_core::{ToolCallAuthError, ToolCallAuthorizer, ToolCallResponder};
+use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
 pub struct AlwaysAsking {
@@ -42,26 +44,31 @@ impl ToolCallAuthorizer for AlwaysAsking {
     async fn request(
         &self,
         call_id: &str,
-        _tool_name: &str,
-        _args: &Value,
-        responder: ToolCallResponder,
+        tool_name: &str,
+        args: &Value,
+        responder: Arc<dyn ToolCallResponder>,
     ) -> bool {
         let (tx, rx) = oneshot::channel();
         self.pending_auth
             .lock()
             .expect("always-ask pending-auth mutex poisoned")
             .insert(call_id.to_string(), tx);
-        responder.send_custom(None).await;
+        responder
+            .send_extra(json!({
+                "tool_name": tool_name,
+                "arguments": args,
+            }))
+            .await;
         rx.await.unwrap_or(false)
     }
 
-    async fn reply(&self, call_id: &str, data: Value) -> Result<(), ToolboxError> {
+    async fn reply(&self, call_id: &str, data: Value) -> Result<(), ToolCallAuthError> {
         let tx = self
             .pending_auth
             .lock()
             .expect("always-ask pending-auth mutex poisoned")
             .remove(call_id)
-            .ok_or_else(|| ToolboxError::NoPendingAuthorization {
+            .ok_or_else(|| ToolCallAuthError::NoPendingAuthorization {
                 call_id: call_id.to_string(),
             })?;
         let _ = tx.send(decode_allow(&data));

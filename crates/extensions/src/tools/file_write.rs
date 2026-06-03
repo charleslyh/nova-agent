@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use moray_core::{MorayError, TypedTool};
+use moray_core::{MorayError, ToolCallResponder, TypedTool};
 use serde::Deserialize;
 
 use super::util::path::resolve_path;
@@ -27,7 +27,11 @@ impl TypedTool for FileWriteTool {
     type Args = FileWriteArgs;
     const NAME: &'static str = "file_write";
 
-    async fn run(&self, args: FileWriteArgs) -> Result<String, MorayError> {
+    async fn run(
+        &self,
+        args: FileWriteArgs,
+        responder: &dyn ToolCallResponder,
+    ) -> Result<(), MorayError> {
         let path = resolve_path(&self.cwd, &args.path);
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| {
@@ -39,10 +43,13 @@ impl TypedTool for FileWriteTool {
         tokio::fs::write(&path, args.content.as_bytes())
             .await
             .map_err(|e| MorayError::Message(format!("file_write: failed to write file: {e}")))?;
-        Ok(format!(
-            "Written {} bytes to {}",
-            args.content.len(),
-            path.display()
-        ))
+        responder
+            .send_text(format!(
+                "Written {} bytes to {}",
+                args.content.len(),
+                path.display()
+            ))
+            .await;
+        Ok(())
     }
 }

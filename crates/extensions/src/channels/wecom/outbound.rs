@@ -4,7 +4,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use moray_core::{parse_tool_call_args, AgentFinishKind, AgentResponseEvent, ToolCallEvent};
+use moray_core::{
+    parse_tool_call_args, AgentFinishKind, AgentResponseEvent, ToolCallEventKind,
+    ToolCallStatus,
+};
 use moray_session::{SessionEvent, SessionEventKind};
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -62,6 +65,7 @@ struct PendingToolAuth {
 struct WeComTurnState {
     body: String,
     tools: HashMap<String, ToolSlot>,
+    tool_outputs: HashMap<String, String>,
     tool_displays: HashMap<String, String>,
     pending_auth: HashMap<String, PendingToolAuth>,
     auth_prompted: HashSet<String>,
@@ -276,44 +280,60 @@ impl WeComSessionOutbound {
                     self.handle_chunk(&text).await;
                 }
             }
-            AgentResponseEvent::ToolCall { event } => match event {
-                ToolCallEvent::Requested { content } => {
-                    let call_id = content.call_id.clone();
-                    let display = friendly_tool_label(&content.name, &content.name);
+            AgentResponseEvent::ToolCall { event } => match &event.kind {
+                ToolCallEventKind::Requested {
+                    name,
+                    arguments,
+                } => {
+                    let call_id = event.call_id.clone();
+                    let display = friendly_tool_label(&name, &name);
                     let mut state = self.state.lock().await;
                     state.pending_auth.insert(
                         call_id.clone(),
                         PendingToolAuth {
-                            tool_name: content.name.clone(),
+                            tool_name: name.clone(),
                             display_name: display.clone(),
-                            arguments: parse_tool_call_args(&content.arguments),
+                            arguments: parse_tool_call_args(&arguments),
                         },
                     );
                     state.tool_displays.insert(call_id, display);
                 }
-                ToolCallEvent::Started { call_id } => {
+                ToolCallEventKind::Started => {
+                    let call_id = event.call_id.clone();
                     let display = {
                         let state = self.state.lock().await;
                         state
                             .tool_displays
-                            .get(call_id)
+                            .get(&call_id)
                             .cloned()
                             .unwrap_or_else(|| call_id.clone())
                     };
-                    self.handle_tool_started(call_id.clone(), display).await;
+                    self.handle_tool_started(call_id, display).await;
                 }
-                ToolCallEvent::Completed { content } => {
-                    let call_id = content.call_id.clone();
-                    let is_error = content.status == moray_core::ToolCallStatus::Error;
+                ToolCallEventKind::Payload { text } => {
+                    let mut state = self.state.lock().await;
+                    let acc = state
+                        .tool_outputs
+                        .entry(event.call_id.clone())
+                        .or_default();
+                    acc.push_str(text);
+                }
+                ToolCallEventKind::Finished { status } => {
+                    let call_id = event.call_id.clone();
+                    let is_error = *status == ToolCallStatus::Error;
+                    let output = {
+                        let mut state = self.state.lock().await;
+                        state.tool_outputs.remove(&call_id).unwrap_or_default()
+                    };
                     let result = if is_error {
-                        serde_json::json!({ "error": content.content })
+                        serde_json::json!({ "error": output })
                     } else {
-                        serde_json::json!({ "output": content.content })
+                        serde_json::json!({ "output": output })
                     };
                     self.handle_tool_result(call_id, result, is_error).await;
                 }
-                ToolCallEvent::Custom { call_id, .. } => {
-                    self.handle_tool_auth(call_id).await;
+                ToolCallEventKind::Extra { .. } => {
+                    self.handle_tool_auth(&event.call_id).await;
                 }
             },
             AgentResponseEvent::Finished { kind } => {
@@ -504,7 +524,7 @@ impl WeComSessionOutbound {
             state.pending_auth.get(call_id).cloned()
         };
         let Some(pending) = pending else {
-            tracing::warn!(call_id, "WeCom tool auth Custom without prior Requested event");
+            tracing::warn!(call_id, "WeCom tool auth Extra without prior Requested event");
             return;
         };
         {

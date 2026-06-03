@@ -2,7 +2,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use moray_channels::ChannelCatalogError;
-use moray_core::{MorayError, ToolboxError};
+use moray_core::{MorayError, ToolCallAuthError};
 use moray_sonda::{
     FileIoError, InvalidContent, MissingReference, SessionCatalogError, SondaError,
     SondaSessionError, SondaSettingsStoreError, SondaToolCatalogError,
@@ -23,7 +23,7 @@ pub(crate) fn response_with(status: StatusCode, message: impl Into<String>) -> i
     )
 }
 
-pub(crate) fn toolbox_error_response(err: ToolboxError) -> Response {
+pub(crate) fn tool_call_auth_error_response(err: ToolCallAuthError) -> Response {
     response_with(StatusCode::NOT_FOUND, err.to_string()).into_response()
 }
 

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use regex::Regex;
 use reqwest::header::CONTENT_TYPE;
-use moray_core::{MorayError, TypedTool};
+use moray_core::{MorayError, ToolCallResponder, TypedTool};
 use serde::Deserialize;
 use tokio::time::Duration;
 
@@ -27,7 +27,11 @@ impl TypedTool for WebFetchTool {
     type Args = WebFetchArgs;
     const NAME: &'static str = "web_fetch";
 
-    async fn run(&self, args: WebFetchArgs) -> Result<String, MorayError> {
+    async fn run(
+        &self,
+        args: WebFetchArgs,
+        responder: &dyn ToolCallResponder,
+    ) -> Result<(), MorayError> {
         let url = reqwest::Url::parse(args.url.trim())
             .map_err(|e| MorayError::Message(format!("web_fetch: invalid URL: {e}")))?;
         match url.scheme() {
@@ -65,10 +69,12 @@ impl TypedTool for WebFetchTool {
             MorayError::Message(format!("web_fetch: failed to read response body: {e}"))
         })?;
 
-        if content_type.contains("text/html") {
-            Ok(html_to_text(&body))
+        let text = if content_type.contains("text/html") {
+            html_to_text(&body)
         } else {
-            Ok(body)
-        }
+            body
+        };
+        responder.send_text(text).await;
+        Ok(())
     }
 }
