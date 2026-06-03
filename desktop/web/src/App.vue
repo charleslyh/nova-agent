@@ -32,12 +32,14 @@
           <h1 class="welcome-prompt__title">我们聊些什么？</h1>
         </div>
 
-        <div v-show="!isWelcome()" class="stream-column content-lane">
-          <ChannelSessionNotice
-            v-if="isChannelSession"
-            :platform="activeChannelPlatform"
-          />
+        <div v-show="!isWelcome()" class="stream-column">
+          <div v-if="isChannelSession" class="stream-lane">
+            <ChannelSessionNotice
+              :platform="activeChannelPlatform"
+            />
+          </div>
           <Stream
+            :key="activeSessionId"
             class="stream-panel"
             :messages="transcript"
             :status="status"
@@ -145,7 +147,7 @@
 </template>
 
 <script setup>
-import { onMounted, watch } from "vue";
+import { onMounted } from "vue";
 import SettingsDialog from "@/components/settings/SettingsDialog.vue";
 import AppSidebar from "@/components/app/AppSidebar.vue";
 import AppTitlebar from "@/components/app/AppTitlebar.vue";
@@ -214,11 +216,7 @@ const {
   getSessionWorkspace
 } = useChatSession();
 
-const { drawerOpen, toggleDrawer, closeDrawer } = useSessionDetailDrawer();
-
-watch(activeSessionId, () => {
-  closeDrawer();
-});
+const { drawerOpen, toggleDrawer } = useSessionDetailDrawer();
 
 async function onSelectComposerAgent(agentId) {
   try {
@@ -245,7 +243,6 @@ async function onDeleteSession(sessionId) {
 }
 
 function onNewSession() {
-  closeDrawer();
   openWelcome();
 }
 
@@ -366,10 +363,20 @@ body,
 
 .stream-column {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  width: 100%;
+}
+
+.stream-lane {
+  width: min(100%, 920px);
+  margin: 0 auto;
+  padding: 0 16px;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 .stream-panel {

@@ -294,7 +294,7 @@ watch(
   overflow-y: auto;
   overflow-x: hidden;
   padding-top: 2px;
-  /* 与下方 content-lane 同宽对齐：避免纵向滚动条吃掉 stream 宽度而 composer 仍占满整栏 */
+  /* 滚动条贴 chat-main 右缘；消息宽度由 .stream-inner 与 composer 的 content-lane 对齐 */
   scrollbar-gutter: stable;
 }
 

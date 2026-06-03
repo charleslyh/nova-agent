@@ -540,9 +540,10 @@ export function useChatSession() {
   async function activateSession(sessionId) {
     if (!sessionId || sessionId === activeSessionId.value) return;
     stopEventSubscription();
+    clearConversationState();
+    sessionWorkspaceDir.value = null;
     activeSessionId.value = sessionId;
     await refreshSessionWorkspaceDir(sessionId);
-    clearConversationState();
     await refreshAgentSelectionState(sessionId);
     unsubscribeEvents = await client.subscribeEvents(sessionId, {
       fromSeq: 0,
