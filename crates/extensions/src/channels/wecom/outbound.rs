@@ -320,6 +320,12 @@ impl WeComSessionOutbound {
                 }
                 ToolCallEventKind::Finished { status } => {
                     let call_id = event.call_id.clone();
+                    if *status == ToolCallStatus::Canceled {
+                        let mut state = self.state.lock().await;
+                        state.tool_outputs.remove(&call_id);
+                        state.tool_displays.remove(&call_id);
+                        return;
+                    }
                     let is_error = *status == ToolCallStatus::Error;
                     let output = {
                         let mut state = self.state.lock().await;
@@ -337,8 +343,16 @@ impl WeComSessionOutbound {
                 }
             },
             AgentResponseEvent::Finished { kind } => {
-                if let AgentFinishKind::Failed { reason } = kind {
-                    self.handle_chunk(&format!("\n\nError: {reason}")).await;
+                match kind {
+                    AgentFinishKind::Failed { reason } => {
+                        self.handle_chunk(&format!("\n\nError: {reason}")).await;
+                    }
+                    AgentFinishKind::Canceled => {
+                        let mut state = self.state.lock().await;
+                        state.tool_outputs.clear();
+                        state.tool_displays.clear();
+                    }
+                    _ => {}
                 }
             }
             AgentResponseEvent::Started => {}

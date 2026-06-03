@@ -52,6 +52,7 @@ pub fn parse_tool_call_args(raw: &str) -> Value {
 pub enum ToolCallStatus {
     Success,
     Error,
+    Canceled,
 }
 
 /// Unified tool execution result payload used across toolbox events and agent internals.

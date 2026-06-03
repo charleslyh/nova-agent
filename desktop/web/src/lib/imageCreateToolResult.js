@@ -36,6 +36,10 @@ export function isToolCallError(status) {
   return status === "error";
 }
 
+export function isToolCallCanceled(status) {
+  return status === "canceled";
+}
+
 /** Toolbox `Started` event — tool is executing (after auth if required). */
 export function isToolCallRunning(status) {
   return status === "running";

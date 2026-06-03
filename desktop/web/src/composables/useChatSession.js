@@ -238,7 +238,11 @@ export function useChatSession() {
         const card = ensureToolCard(callId);
         if (!card) break;
         card.awaitAuthAction = false;
-        card.status = ev.status === "error" ? "error" : "success";
+        if (ev.status === "canceled") {
+          card.status = "canceled";
+        } else {
+          card.status = ev.status === "error" ? "error" : "success";
+        }
         if (card.result === TOOL_CALL_DENIED_BY_USER) {
           card.authState = "denied";
           card.authDecision = false;
@@ -247,6 +251,14 @@ export function useChatSession() {
       }
       default:
         break;
+    }
+  }
+
+  function markInFlightToolCardsCanceled() {
+    for (const card of toolCardsByCallId.values()) {
+      if (!card || card.status === "success" || card.status === "error") continue;
+      card.awaitAuthAction = false;
+      card.status = "canceled";
     }
   }
 
@@ -309,6 +321,7 @@ export function useChatSession() {
       handleToolCallAgentEvent(agentEv);
       if (agentEv?.type === "finished") {
         if (isFinishedCanceled(agentEv.kind)) {
+          markInFlightToolCardsCanceled();
           push("assistant", "（已停止生成）");
           finishAssistantChunkStream();
         } else {

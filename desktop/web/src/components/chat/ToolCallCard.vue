@@ -33,6 +33,10 @@
             <circle cx="8" cy="8" r="7" fill="currentColor" />
             <path d="M5.1 5.1l5.8 5.8M10.9 5.1l-5.8 5.8" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" />
           </svg>
+          <svg v-else-if="isToolCallCanceled(item.status)" viewBox="0 0 16 16">
+            <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3.4 2.2" />
+            <rect x="6.1" y="6.1" width="3.8" height="3.8" rx="0.5" fill="currentColor" />
+          </svg>
           <svg v-else viewBox="0 0 16 16">
             <circle cx="8" cy="8" r="2.2" fill="currentColor" />
           </svg>
@@ -97,9 +101,33 @@
         <div class="label">调用参数</div>
         <pre class="code">{{ formatToolArguments(item.arguments) }}</pre>
       </div>
-      <div v-if="!item.awaitAuthAction" class="section">
+      <div v-if="!item.awaitAuthAction" class="section section--result">
         <div class="label">调用结果</div>
-        <pre class="code">{{ displayResult }}</pre>
+        <p
+          v-if="showCanceledEmptyState"
+          class="result-state result-state--canceled"
+          role="status"
+        >
+          工具调用已停止，未产生输出。
+        </p>
+        <template v-else-if="hasToolResult">
+          <p
+            v-if="isToolCallCanceled(item.status)"
+            class="result-notice result-notice--canceled"
+            role="status"
+          >
+            以下为停止前的部分输出
+          </p>
+          <pre class="code">{{ formattedResult }}</pre>
+        </template>
+        <p
+          v-else
+          class="result-state result-state--waiting"
+          role="status"
+          :aria-busy="item.status === 'running' ? 'true' : 'false'"
+        >
+          {{ waitingResultLabel }}
+        </p>
       </div>
     </div>
   </article>
@@ -109,6 +137,7 @@
 import { computed, ref, watch } from "vue";
 import {
   isImageCreateTool,
+  isToolCallCanceled,
   isToolCallError,
   isToolCallSuccess,
   parseImageCreateResult,
@@ -136,6 +165,9 @@ const props = defineProps({
 
 defineEmits(["toggle", "approve", "deny"]);
 
+/** Backend marker; not shown as tool output. */
+const TOOL_CALL_CANCELED = "This tool call was canceled.";
+
 const imageLoadFailed = ref(false);
 
 const isImageCreate = computed(() => isImageCreateTool(props.item.toolName));
@@ -155,10 +187,25 @@ const imageCreateMediaMode = computed(() => {
   return null;
 });
 
-const displayResult = computed(() => {
-  const raw = props.item.result;
-  if (raw == null || String(raw).trim() === "") return "(waiting...)";
+function normalizeResultRaw(raw) {
+  if (raw == null) return "";
   const trimmed = String(raw).trim();
+  if (!trimmed || trimmed === TOOL_CALL_CANCELED) return "";
+  return trimmed;
+}
+
+const hasToolResult = computed(() => normalizeResultRaw(props.item.result).length > 0);
+
+const showCanceledEmptyState = computed(
+  () => isToolCallCanceled(props.item.status) && !hasToolResult.value
+);
+
+const waitingResultLabel = computed(() =>
+  props.item.status === "running" ? "工具执行中…" : "等待工具返回…"
+);
+
+const formattedResult = computed(() => {
+  const trimmed = normalizeResultRaw(props.item.result);
   try {
     return JSON.stringify(JSON.parse(trimmed), null, 2);
   } catch {
@@ -199,6 +246,7 @@ function statusLabel(status) {
   if (status === "running") return "执行中";
   if (isToolCallSuccess(status)) return "成功";
   if (status === "error") return "失败";
+  if (isToolCallCanceled(status)) return "已取消";
   return "等待中";
 }
 
@@ -206,6 +254,7 @@ function statusIconClass(status) {
   if (status === "running") return "status-icon--running";
   if (isToolCallSuccess(status)) return "status-icon--success";
   if (status === "error") return "status-icon--error";
+  if (isToolCallCanceled(status)) return "status-icon--canceled";
   return "status-icon--pending";
 }
 </script>
@@ -285,6 +334,10 @@ function statusIconClass(status) {
 
 .status-icon--pending {
   color: #6b7280;
+}
+
+.status-icon--canceled {
+  color: #64748b;
 }
 
 .chevron {
@@ -422,5 +475,36 @@ function statusIconClass(status) {
   word-break: break-word;
   max-height: 220px;
   overflow: auto;
+}
+
+.result-state,
+.result-notice {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.result-state--canceled {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px dashed #c5cad6;
+  background: #eef0f4;
+  color: #5c6478;
+}
+
+.result-state--waiting {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #ececf1;
+  color: #6b7280;
+}
+
+.result-notice--canceled {
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border-left: 3px solid #94a3b8;
+  background: #f3f4f6;
+  color: #5c6478;
 }
 </style>

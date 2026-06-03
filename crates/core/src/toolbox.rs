@@ -13,6 +13,7 @@ use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,9 @@ use crate::types::{
 
 /// Shown in the tool result when authorization denies execution.
 pub const TOOL_CALL_DENIED_BY_USER: &str = "This tool call was denied by the user.";
+
+/// Shown in the tool result when the turn or tool-call group is canceled.
+pub const TOOL_CALL_CANCELED: &str = "This tool call was canceled.";
 
 /// Errors from [`Toolbox`], [`ToolCallAuthorizer::reply`], and related flows.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -300,14 +304,16 @@ impl ToolCallResponder for ToolCallTracker {
 
 /// Concurrent batch of tool calls: shared event sink, per-call trackers, join-set execution.
 struct ToolCallGroup {
+    cancellation: CancellationToken,
     join_set: JoinSet<()>,
     sink: Arc<dyn ToolCallEventSink>,
     tool_calls: Vec<Arc<ToolCallTracker>>,
 }
 
 impl ToolCallGroup {
-    fn new(sink: Arc<dyn ToolCallEventSink>) -> Self {
+    fn new(sink: Arc<dyn ToolCallEventSink>, cancellation: CancellationToken) -> Self {
         Self {
+            cancellation,
             join_set: JoinSet::new(),
             sink,
             tool_calls: Vec::new(),
@@ -322,12 +328,30 @@ impl ToolCallGroup {
     ) {
         let tracker = Arc::new(ToolCallTracker::new(request, self.sink.clone()));
         self.tool_calls.push(tracker.clone());
-        self.join_set.spawn(run_call(tool, auth, tracker));
+        let cancellation = self.cancellation.clone();
+        self.join_set
+            .spawn(run_call(tool, auth, tracker, cancellation));
     }
 
     async fn join(mut self) -> (Vec<ToolCallRequest>, Vec<ToolCallResult>) {
-        // This is identical with future.join_all
-        while self.join_set.join_next().await.is_some() {}
+        while !self.join_set.is_empty() {
+            if self.cancellation.is_cancelled() {
+                self.join_set.abort_all();
+            }
+            match self.join_set.join_next().await {
+                Some(Ok(())) => {}
+                Some(Err(_)) => {}
+                None => break,
+            }
+        }
+
+        if self.cancellation.is_cancelled() {
+            for tracker in &self.tool_calls {
+                if tracker.result.lock().await.is_none() {
+                    finish_canceled(tracker).await;
+                }
+            }
+        }
 
         let mut requests = Vec::with_capacity(self.tool_calls.len());
         let mut results = Vec::with_capacity(self.tool_calls.len());
@@ -340,11 +364,21 @@ impl ToolCallGroup {
     }
 }
 
+async fn finish_canceled(tracker: &ToolCallTracker) {
+    let _ = tracker.finish(ToolCallStatus::Canceled).await;
+}
+
 async fn run_call(
     tool: Arc<dyn Tool>,
     auth: Option<Arc<dyn ToolCallAuthorizer>>,
     tracker: Arc<ToolCallTracker>,
+    cancellation: CancellationToken,
 ) {
+    if cancellation.is_cancelled() {
+        finish_canceled(&tracker).await;
+        return;
+    }
+
     let call_id = tracker.request.call_id.clone();
     let name = tracker.request.name.clone();
     let arguments = tracker.request.arguments.clone();
@@ -358,18 +392,33 @@ async fn run_call(
         ))
         .await
     {
+        if cancellation.is_cancelled() {
+            finish_canceled(&tracker).await;
+        } else {
+            let _ = tracker.finish(ToolCallStatus::Error).await;
+        }
+        return;
+    }
+
+    if cancellation.is_cancelled() {
+        finish_canceled(&tracker).await;
         return;
     }
 
     let allowed = match &auth {
         Some(auth) => {
-            auth.request(
-                call_id.as_str(),
-                name.as_str(),
-                &args_value,
-                Arc::clone(&tracker) as Arc<dyn ToolCallResponder>,
-            )
-            .await
+            tokio::select! {
+                _ = cancellation.cancelled() => {
+                    finish_canceled(&tracker).await;
+                    return;
+                }
+                allowed = auth.request(
+                    call_id.as_str(),
+                    name.as_str(),
+                    &args_value,
+                    Arc::clone(&tracker) as Arc<dyn ToolCallResponder>,
+                ) => allowed,
+            }
         }
         None => true,
     };
@@ -382,11 +431,27 @@ async fn run_call(
         return;
     }
 
-    if !tracker.emit(ToolCallEvent::started(call_id.clone())).await {
+    if cancellation.is_cancelled() {
+        finish_canceled(&tracker).await;
         return;
     }
 
-    let status = match tool.call(args_value, tracker.as_ref()).await {
+    if !tracker.emit(ToolCallEvent::started(call_id.clone())).await {
+        if cancellation.is_cancelled() {
+            finish_canceled(&tracker).await;
+        } else {
+            let _ = tracker.finish(ToolCallStatus::Error).await;
+        }
+        return;
+    }
+
+    let status = match tokio::select! {
+        _ = cancellation.cancelled() => {
+            finish_canceled(&tracker).await;
+            return;
+        }
+        res = tool.call(args_value, tracker.as_ref()) => res,
+    } {
         Ok(()) => ToolCallStatus::Success,
         Err(e) => {
             tracker
@@ -471,12 +536,17 @@ impl Toolbox {
         self.manifests.clone()
     }
 
-    pub async fn begin_group(&self, sink: Arc<dyn ToolCallEventSink>) -> ToolCallGroupId {
+    pub async fn begin_group(
+        &self,
+        sink: Arc<dyn ToolCallEventSink>,
+        turn_cancellation: CancellationToken,
+    ) -> ToolCallGroupId {
         let id = self.next_group_id.fetch_add(1, Ordering::Relaxed);
+        let group_cancellation = turn_cancellation.child_token();
         self.groups
             .lock()
             .await
-            .insert(id, ToolCallGroup::new(sink));
+            .insert(id, ToolCallGroup::new(sink, group_cancellation));
         id
     }
 
@@ -570,7 +640,9 @@ mod tests {
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::sync::Mutex;
+    use std::time::Duration;
     use tokio::sync::{mpsc, oneshot};
+    use tokio_util::sync::CancellationToken;
 
     struct MpscToolCallEventSink(mpsc::Sender<ToolCallEvent>);
 
@@ -678,6 +750,24 @@ mod tests {
         }
     }
 
+    struct SlowTool;
+
+    #[async_trait]
+    impl TypedTool for SlowTool {
+        type Args = Value;
+        const NAME: &'static str = "slow";
+
+        async fn run(
+            &self,
+            _: Value,
+            responder: &dyn ToolCallResponder,
+        ) -> Result<(), MorayError> {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            responder.send_text("slow".into()).await;
+            Ok(())
+        }
+    }
+
     struct FailTool;
 
     #[async_trait]
@@ -720,12 +810,13 @@ mod tests {
 
     async fn collect_call_events(
         tb: Arc<Toolbox>,
+        turn: CancellationToken,
         call_id: &str,
         name: &str,
         arguments: &str,
     ) -> Vec<ToolCallEvent> {
         let (sink, mut rx) = MpscToolCallEventSink::pair(16);
-        let group = tb.begin_group(sink).await;
+        let group = tb.begin_group(sink, turn).await;
         tb.call_tool(
             group,
             ToolCallRequest {
@@ -765,7 +856,9 @@ mod tests {
         let tb_arc = Arc::new(make_toolbox(policy_obj));
         let collect_fut = tokio::spawn({
             let tb = tb_arc.clone();
-            async move { collect_call_events(tb, "c1", "echo", r#""hi""#).await }
+            async move {
+                collect_call_events(tb, CancellationToken::new(), "c1", "echo", r#""hi""#).await
+            }
         });
         await_pending(policy.as_ref(), "c1").await;
         policy
@@ -795,7 +888,9 @@ mod tests {
         let tb_arc = Arc::new(make_toolbox(policy_obj));
         let collect_fut = tokio::spawn({
             let tb = tb_arc.clone();
-            async move { collect_call_events(tb, "c1", "echo", "{}").await }
+            async move {
+                collect_call_events(tb, CancellationToken::new(), "c1", "echo", "{}").await
+            }
         });
         await_pending(policy.as_ref(), "c1").await;
         policy
@@ -824,7 +919,9 @@ mod tests {
         let tb_arc = Arc::new(make_toolbox(policy_obj));
         let collect_fut = tokio::spawn({
             let tb = tb_arc.clone();
-            async move { collect_call_events(tb, "c2", "bad", "{}").await }
+            async move {
+                collect_call_events(tb, CancellationToken::new(), "c2", "bad", "{}").await
+            }
         });
         await_pending(policy.as_ref(), "c2").await;
         policy
@@ -874,7 +971,9 @@ mod tests {
                 .tool(Arc::new(EchoTool) as Arc<dyn Tool>)
                 .build(),
         );
-        let out = collect_call_events(tb.clone(), "c0", "echo", r#""z""#).await;
+        let out =
+            collect_call_events(tb.clone(), CancellationToken::new(), "c0", "echo", r#""z""#)
+                .await;
         assert_eq!(
             out,
             vec![
@@ -889,7 +988,9 @@ mod tests {
     #[tokio::test]
     async fn allow_decision_emits_requested_then_started_then_finished() {
         let tb = Arc::new(make_toolbox(Arc::new(StaticPolicy(StaticDecision::Allow))));
-        let out = collect_call_events(tb.clone(), "c3", "echo", r#""x""#).await;
+        let out =
+            collect_call_events(tb.clone(), CancellationToken::new(), "c3", "echo", r#""x""#)
+                .await;
         assert_eq!(
             out,
             vec![
@@ -904,7 +1005,8 @@ mod tests {
     #[tokio::test]
     async fn deny_decision_emits_requested_then_finished_with_denied_marker() {
         let tb = Arc::new(make_toolbox(Arc::new(StaticPolicy(StaticDecision::Deny))));
-        let out = collect_call_events(tb.clone(), "c4", "echo", "{}").await;
+        let out =
+            collect_call_events(tb.clone(), CancellationToken::new(), "c4", "echo", "{}").await;
         assert_eq!(
             out,
             vec![
@@ -913,6 +1015,116 @@ mod tests {
                 ToolCallEvent::finished("c4".into(), ToolCallStatus::Error)
             ]
         );
+    }
+
+    fn make_toolbox_with_slow(auth: Arc<dyn ToolCallAuthorizer>) -> Toolbox {
+        ToolboxBuilder::new()
+            .manifests(vec![ToolManifest {
+                name: "slow".into(),
+                description: "".into(),
+                parameters: r#"{"type":"object"}"#.into(),
+            }])
+            .tool(Arc::new(SlowTool) as Arc<dyn Tool>)
+            .auth(auth)
+            .build()
+    }
+
+    #[tokio::test]
+    async fn cancel_during_auth_finishes_canceled() {
+        let turn = CancellationToken::new();
+        let policy = Arc::new(AskUserPolicy::new());
+        let policy_obj: Arc<dyn ToolCallAuthorizer> = policy.clone();
+        let tb_arc = Arc::new(make_toolbox(policy_obj));
+        let (sink, mut rx) = MpscToolCallEventSink::pair(16);
+        let group = tb_arc
+            .begin_group(sink, turn.clone())
+            .await;
+        tb_arc
+            .call_tool(
+                group,
+                ToolCallRequest {
+                    call_id: "cx".to_string(),
+                    name: "echo".to_string(),
+                    arguments: "{}".to_string(),
+                },
+            )
+            .await
+            .expect("start call");
+        let collect_fut = tokio::spawn(async move {
+            let mut out = Vec::new();
+            while let Some(ev) = rx.recv().await {
+                out.push(ev);
+            }
+            out
+        });
+        await_pending(policy.as_ref(), "cx").await;
+        turn.cancel();
+        let (events, end_result) =
+            tokio::join!(collect_fut, tb_arc.end_group(group));
+        end_result.expect("end group");
+        let events = events.expect("join");
+        assert!(matches!(
+            events.last(),
+            Some(ToolCallEvent {
+                call_id,
+                kind: ToolCallEventKind::Finished { status }
+            }) if call_id == "cx" && *status == ToolCallStatus::Canceled
+        ));
+        assert!(!events.iter().any(|ev| matches!(
+            ev,
+            ToolCallEvent {
+                kind: ToolCallEventKind::Started,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test]
+    async fn cancel_after_started_finishes_canceled() {
+        let turn = CancellationToken::new();
+        let tb_arc = Arc::new(make_toolbox_with_slow(Arc::new(StaticPolicy(
+            StaticDecision::Allow,
+        ))));
+        let (sink, mut rx) = MpscToolCallEventSink::pair(16);
+        let group = tb_arc
+            .begin_group(sink, turn.clone())
+            .await;
+        tb_arc
+            .call_tool(
+                group,
+                ToolCallRequest {
+                    call_id: "cy".to_string(),
+                    name: "slow".to_string(),
+                    arguments: "{}".to_string(),
+                },
+            )
+            .await
+            .expect("start call");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        turn.cancel();
+        let recv_fut = async {
+            let mut out = Vec::new();
+            while let Some(ev) = rx.recv().await {
+                out.push(ev);
+            }
+            out
+        };
+        let (events, end_result) = tokio::join!(recv_fut, tb_arc.end_group(group));
+        end_result.expect("end group");
+        assert!(events.iter().any(|ev| matches!(
+            ev,
+            ToolCallEvent {
+                kind: ToolCallEventKind::Started,
+                ..
+            }
+        )));
+        assert!(matches!(
+            events.last(),
+            Some(ToolCallEvent {
+                call_id,
+                kind: ToolCallEventKind::Finished { status }
+            }) if call_id == "cy" && *status == ToolCallStatus::Canceled
+        ));
     }
 
     #[tokio::test]

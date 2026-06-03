@@ -276,11 +276,15 @@ async fn react_once(
 
     let mut acc_text = String::new();
     let mut tool_call_group: Option<ToolCallGroupId> = None;
+    let mut loop_exit: Option<AgentFinishKind> = None;
 
-    loop {
+    'completion: loop {
         // Race cancellation with model chunks so shutdown latency is not coupled to provider chunk cadence or backpressure.
         let next = tokio::select! {
-            _ = cancellation.cancelled() => return Err(AgentFinishKind::Canceled),
+            _ = cancellation.cancelled() => {
+                loop_exit = Some(AgentFinishKind::Canceled);
+                break 'completion;
+            }
             next = chat_stream.next() => next,
         };
 
@@ -288,14 +292,15 @@ async fn react_once(
             // Early EOF is treated as a safe boundary to avoid replaying partial intent as if it were complete.
             None => {
                 debug!("chat stream ended without Done chunk");
-                break;
+                break 'completion;
             }
             Some(Ok(chunk)) => chunk,
             Some(Err(e)) => {
                 warn!(error = %e, "chat stream returned error chunk");
-                return Err(AgentFinishKind::Failed {
+                loop_exit = Some(AgentFinishKind::Failed {
                     reason: e.to_string(),
                 });
+                break 'completion;
             }
         };
 
@@ -318,66 +323,79 @@ async fn react_once(
 
                 if tool_call_group.is_none() {
                     let sink = Arc::new(AgentToolCallEventSink { tx: tx.clone() });
-                    tool_call_group = Some(toolbox.begin_group(sink).await);
+                    tool_call_group =
+                        Some(toolbox.begin_group(sink, cancellation.clone()).await);
                 }
 
                 let group = tool_call_group.expect("group started on first tool call");
                 // TODO: 考虑错误恢复，例如根据 tool_call.name 找不到工具，arguments 格式错误等。以便增强 Agent 的健壮性。
-                if let Err(e) = toolbox.call_tool(group, tool_call).await
-                {
-                    return Err(toolbox_err(e));
+                if let Err(e) = toolbox.call_tool(group, tool_call).await {
+                    loop_exit = Some(toolbox_err(e));
+                    break 'completion;
                 }
             }
             ChatCompletionResponseChunk::Done { reason } => match reason {
                 ChatCompletionFinishReason::Refusal { reason } => {
                     info!(?reason, "completion refused");
-                    return Err(AgentFinishKind::Refused { reason });
+                    loop_exit = Some(AgentFinishKind::Refused { reason });
+                    break 'completion;
                 }
                 ChatCompletionFinishReason::Length => {
                     warn!("completion stopped due to token limit");
-                    return Err(AgentFinishKind::Failed {
+                    loop_exit = Some(AgentFinishKind::Failed {
                         reason: "completion stopped due to token limit".to_string(),
                     });
+                    break 'completion;
                 }
                 ChatCompletionFinishReason::Stop => {
                     debug!("completion finished with stop reason");
-                    break;
+                    break 'completion;
                 }
             },
         }
     }
 
-    let Some(group) = tool_call_group else {
-        debug!("finished without tool calls");
-        return Ok(0);
-    };
+    if let Some(group) = tool_call_group.take() {
+        let end_result = toolbox.end_group(group).await;
+        if let Some(kind) = loop_exit {
+            let _ = end_result;
+            return Err(kind);
+        }
+        let (tool_call_requests, tool_call_results) = end_result.map_err(toolbox_err)?;
 
-    let (tool_call_requests, tool_call_results) = tokio::select! {
-        _ = cancellation.cancelled() => return Err(AgentFinishKind::Canceled),
-        result = toolbox.end_group(group) => result.map_err(toolbox_err)?,
-    };
+        if cancellation.is_cancelled() {
+            return Err(AgentFinishKind::Canceled);
+        }
 
-    let nb_tool_calls = tool_call_requests.len();
-    info!(nb_tool_calls, "collected tool calls");
+        let nb_tool_calls = tool_call_requests.len();
+        info!(nb_tool_calls, "collected tool calls");
 
-    let mut ingest_messages = vec![ChatCompletionRequestMessage::Assistant {
-        content: acc_text,
-        tool_calls: Some(tool_call_requests),
-    }];
-    for result in tool_call_results {
-        ingest_messages.push(ChatCompletionRequestMessage::Tool {
-            content: result.content,
-            call_id: result.call_id,
-        });
+        let mut ingest_messages = vec![ChatCompletionRequestMessage::Assistant {
+            content: acc_text,
+            tool_calls: Some(tool_call_requests),
+        }];
+        for result in tool_call_results {
+            ingest_messages.push(ChatCompletionRequestMessage::Tool {
+                content: result.content,
+                call_id: result.call_id,
+            });
+        }
+
+        if let Err(e) = context.ingest(ingest_messages).await {
+            warn!(error = %e, "failed to ingest react_once output");
+            return Err(AgentFinishKind::Failed {
+                reason: e.to_string(),
+            });
+        }
+
+        info!(nb_tool_calls, "react_once completed");
+        return Ok(nb_tool_calls);
     }
 
-    if let Err(e) = context.ingest(ingest_messages).await {
-        warn!(error = %e, "failed to ingest react_once output");
-        return Err(AgentFinishKind::Failed {
-            reason: e.to_string(),
-        });
+    if let Some(kind) = loop_exit {
+        return Err(kind);
     }
 
-    info!(nb_tool_calls, "react_once completed");
-    Ok(nb_tool_calls)
+    debug!("finished without tool calls");
+    Ok(0)
 }

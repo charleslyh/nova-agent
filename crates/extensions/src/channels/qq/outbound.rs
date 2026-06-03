@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use moray_core::{
-    parse_tool_call_args, AgentFinishKind, AgentResponseEvent, ToolCallEventKind,
+    parse_tool_call_args, AgentFinishKind, AgentResponseEvent, ToolCallEventKind, ToolCallStatus,
 };
 use moray_session::{SessionEvent, SessionEventKind};
 use tokio::sync::RwLock;
@@ -97,14 +97,27 @@ impl QqSessionOutbound {
                     self.insert_tool_placeholder(&event.call_id);
                 }
                 ToolCallEventKind::Payload { .. } => {}
-                ToolCallEventKind::Finished { .. } => {}
+                ToolCallEventKind::Finished { status } => {
+                    if *status == ToolCallStatus::Canceled {
+                        let call_id = event.call_id.clone();
+                        self.state.tool_displays.remove(&call_id);
+                        self.state.pending_auth.remove(&call_id);
+                    }
+                }
                 ToolCallEventKind::Extra { .. } => {
                     self.handle_tool_auth(&event.call_id).await;
                 }
             },
             AgentResponseEvent::Finished { kind } => {
-                if let AgentFinishKind::Failed { reason } = kind {
-                    self.handle_chunk(&format!("\n\nError: {reason}")).await;
+                match kind {
+                    AgentFinishKind::Failed { reason } => {
+                        self.handle_chunk(&format!("\n\nError: {reason}")).await;
+                    }
+                    AgentFinishKind::Canceled => {
+                        self.state.pending_auth.clear();
+                        self.state.tool_displays.clear();
+                    }
+                    _ => {}
                 }
             }
             AgentResponseEvent::Started => {}

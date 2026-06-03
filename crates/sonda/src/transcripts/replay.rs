@@ -135,6 +135,9 @@ fn fold_agent_event(
                 flush_pending_assistant(messages, pending_text, pending_tools);
                 let call_id = event.call_id.clone();
                 let content = tool_outputs.remove(&call_id).unwrap_or_default();
+                if *status == ToolCallStatus::Canceled {
+                    return;
+                }
                 let content = if *status == ToolCallStatus::Error && content.is_empty() {
                     "tool call failed".to_string()
                 } else {
@@ -254,6 +257,19 @@ mod tests {
     #[test]
     fn new_user_aborts_partial_assistant() {
         let records = vec![user(1, "hi"), agent(2, tb("hel")), user(3, "next")];
+        let s = replay_records(&records);
+        assert_eq!(s.messages.len(), 2);
+    }
+
+    #[test]
+    fn tool_call_canceled_skips_tool_message() {
+        let records = vec![
+            user(1, "hi"),
+            agent(2, td()),
+            agent(3, tc("c1", "echo", "{}")),
+            agent(4, done_stop()),
+            agent(5, tff("c1", ToolCallStatus::Canceled)),
+        ];
         let s = replay_records(&records);
         assert_eq!(s.messages.len(), 2);
     }
