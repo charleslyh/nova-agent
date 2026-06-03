@@ -74,7 +74,7 @@ impl TypedTool for WebFetchTool {
         } else {
             body
         };
-        responder.send_text(text).await;
+        responder.send_text(text).await?;
         Ok(())
     }
 }

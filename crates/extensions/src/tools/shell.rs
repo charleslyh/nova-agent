@@ -3,6 +3,7 @@ use std::process::Stdio;
 
 use async_trait::async_trait;
 use moray_core::{MorayError, ToolCallResponder, TypedTool};
+
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 use tokio::process::Command;
@@ -47,9 +48,14 @@ impl TypedTool for ShellTool {
         }
 
         let run = run_shell_command(self, command, responder);
+
         timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS), run)
             .await
-            .map_err(|_| MorayError::Message("shell: command timed out after 30 seconds".into()))?
+            .map_err(|_| {
+                MorayError::Message(format!(
+                    "shell: command timed out after {DEFAULT_TIMEOUT_SECS} seconds"
+                ))
+            })?
     }
 }
 
@@ -96,7 +102,7 @@ impl<R: AsyncRead + Unpin> PipeReader<R> {
         };
 
         // send the chunk to agent and UI, then the model can see the output in next ReAct loop step
-        responder.send_text(text).await;
+        responder.send_text(text).await?;
         Ok(())
     }
 }
@@ -158,6 +164,6 @@ async fn run_shell_command(
         "exit_code": status.code(),
     }))
     .map_err(|e| MorayError::Message(format!("shell: serialization failed: {e}")))?;
-    responder.send_text(format!("\n{footer}")).await;
+    responder.send_text(format!("\n{footer}")).await?;
     Ok(())
 }

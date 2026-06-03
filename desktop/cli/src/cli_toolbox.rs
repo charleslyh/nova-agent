@@ -17,11 +17,16 @@ struct PrintingResponder;
 
 #[async_trait]
 impl ToolCallResponder for PrintingResponder {
-    async fn send_extra(&self, _: Value) {}
+    async fn send_extra(&self, _: Value) -> Result<(), moray_core::ToolboxError> {
+        Ok(())
+    }
 
-    async fn send_text(&self, text: String) {
+    async fn send_text(&self, text: String) -> Result<(), moray_core::ToolboxError> {
         print!("{text}");
-        let _ = std::io::stdout().flush();
+        std::io::stdout().flush().map_err(|e| moray_core::ToolboxError::DeliverFailed {
+            reason: e.to_string(),
+        })?;
+        Ok(())
     }
 }
 

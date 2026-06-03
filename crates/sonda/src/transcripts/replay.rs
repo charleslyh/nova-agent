@@ -229,6 +229,65 @@ mod tests {
         AgentResponseEvent::Finished { kind }
     }
 
+    fn assert_user_message(messages: &[ChatCompletionRequestMessage], index: usize, content: &str) {
+        assert!(
+            matches!(
+                &messages[index],
+                ChatCompletionRequestMessage::User { content: c } if c == content
+            ),
+            "expected User {{ content: {content:?} }} at index {index}, got {:?}",
+            messages.get(index)
+        );
+    }
+
+    fn assert_assistant_text(messages: &[ChatCompletionRequestMessage], index: usize, text: &str) {
+        assert!(
+            matches!(
+                &messages[index],
+                ChatCompletionRequestMessage::Assistant { content, tool_calls: None }
+                    if content == text
+            ),
+            "expected Assistant text {text:?} at index {index}, got {:?}",
+            messages.get(index)
+        );
+    }
+
+    fn assert_assistant_tool_calls(
+        messages: &[ChatCompletionRequestMessage],
+        index: usize,
+        call_id: &str,
+        name: &str,
+    ) {
+        assert!(
+            matches!(
+                &messages[index],
+                ChatCompletionRequestMessage::Assistant { tool_calls: Some(calls), .. }
+                    if calls.len() == 1
+                        && calls[0].call_id == call_id
+                        && calls[0].name == name
+            ),
+            "expected Assistant tool_calls [{call_id}/{name}] at index {index}, got {:?}",
+            messages.get(index)
+        );
+    }
+
+    fn assert_tool_message(
+        messages: &[ChatCompletionRequestMessage],
+        index: usize,
+        call_id: &str,
+        content: &str,
+    ) {
+        assert!(
+            matches!(
+                &messages[index],
+                ChatCompletionRequestMessage::Tool { call_id: id, content: c }
+                    if id == call_id && c == content
+            ),
+            "expected Tool {{ call_id: {call_id}, content: {content:?} }} at index {index}, got {:?}",
+            messages.get(index)
+        );
+    }
+
     #[test]
     fn closed_turn_replay_ignores_trailing_finished_event() {
         let records = vec![
@@ -240,6 +299,8 @@ mod tests {
         ];
         let s = replay_records(&records);
         assert_eq!(s.messages.len(), 2);
+        assert_user_message(&s.messages, 0, "hi");
+        assert_assistant_text(&s.messages, 1, "partial");
     }
 
     #[test]
@@ -252,6 +313,8 @@ mod tests {
         ];
         let s = replay_records(&records);
         assert_eq!(s.messages.len(), 2);
+        assert_user_message(&s.messages, 0, "hi");
+        assert_assistant_text(&s.messages, 1, "hel");
     }
 
     #[test]
@@ -259,6 +322,8 @@ mod tests {
         let records = vec![user(1, "hi"), agent(2, tb("hel")), user(3, "next")];
         let s = replay_records(&records);
         assert_eq!(s.messages.len(), 2);
+        assert_user_message(&s.messages, 0, "hi");
+        assert_user_message(&s.messages, 1, "next");
     }
 
     #[test]
@@ -272,6 +337,12 @@ mod tests {
         ];
         let s = replay_records(&records);
         assert_eq!(s.messages.len(), 2);
+        assert_user_message(&s.messages, 0, "hi");
+        assert_assistant_tool_calls(&s.messages, 1, "c1", "echo");
+        assert!(!s.messages.iter().any(|m| matches!(
+            m,
+            ChatCompletionRequestMessage::Tool { .. }
+        )));
     }
 
     #[test]
@@ -286,5 +357,8 @@ mod tests {
         ];
         let s = replay_records(&records);
         assert_eq!(s.messages.len(), 3);
+        assert_user_message(&s.messages, 0, "hi");
+        assert_assistant_tool_calls(&s.messages, 1, "c1", "echo");
+        assert_tool_message(&s.messages, 2, "c1", "ok");
     }
 }

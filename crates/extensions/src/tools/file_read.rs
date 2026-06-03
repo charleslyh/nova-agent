@@ -40,7 +40,7 @@ impl TypedTool for FileReadTool {
 
         let lines: Vec<&str> = content.lines().collect();
         if lines.is_empty() {
-            responder.send_text("File is empty.".to_string()).await;
+            responder.send_text("File is empty.".to_string()).await?;
             return Ok(());
         }
 
@@ -58,7 +58,7 @@ impl TypedTool for FileReadTool {
         if start >= end {
             responder
                 .send_text(format!("[No lines in range, file has {total} lines]"))
-                .await;
+                .await?;
             return Ok(());
         }
 
@@ -68,7 +68,7 @@ impl TypedTool for FileReadTool {
             .map(|(i, line)| format!("{}|{}", start + i + 1, line))
             .collect::<Vec<_>>()
             .join("\n");
-        responder.send_text(output).await;
+        responder.send_text(output).await?;
         Ok(())
     }
 }

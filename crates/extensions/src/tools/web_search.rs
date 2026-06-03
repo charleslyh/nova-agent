@@ -52,7 +52,7 @@ impl TypedTool for WebSearchTool {
         let text = response.text().await.map_err(|e| {
             MorayError::Message(format!("web_search: failed to read response body: {e}"))
         })?;
-        responder.send_text(text).await;
+        responder.send_text(text).await?;
         Ok(())
     }
 }

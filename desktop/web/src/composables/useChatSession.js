@@ -194,8 +194,6 @@ export function useChatSession() {
     return item;
   }
 
-  const TOOL_CALL_DENIED_BY_USER = "This tool call was denied by the user.";
-
   function handleToolCallAgentEvent(agentEv) {
     if (agentEv?.type !== "tool_call" || !agentEv.event) return;
     const ev = agentEv.event;
@@ -204,12 +202,13 @@ export function useChatSession() {
     if (!isNonEmptyString(callId) || !phase) return;
 
     switch (phase) {
-      case "requested":
+      case "requested": {
         ensureToolCard(callId, {
           toolName: ev.name,
           arguments: ev.arguments ?? ""
         });
         break;
+      }
       case "extra": {
         const card = ensureToolCard(callId);
         if (card) {
@@ -238,14 +237,22 @@ export function useChatSession() {
         const card = ensureToolCard(callId);
         if (!card) break;
         card.awaitAuthAction = false;
+        const priorStatus = card.status;
         if (ev.status === "canceled") {
           card.status = "canceled";
+        } else if (ev.status === "error") {
+          card.status = "error";
+          if (
+            card.authState === "denied" ||
+            card.authDecision === false ||
+            card.authState === "blocked" ||
+            (card.authState === "unknown" && priorStatus === "pending")
+          ) {
+            card.authState = "denied";
+            card.authDecision = false;
+          }
         } else {
-          card.status = ev.status === "error" ? "error" : "success";
-        }
-        if (card.result === TOOL_CALL_DENIED_BY_USER) {
-          card.authState = "denied";
-          card.authDecision = false;
+          card.status = "success";
         }
         break;
       }

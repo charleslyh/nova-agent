@@ -143,7 +143,6 @@ import {
   parseImageCreateResult,
   shouldShowImageCreateLoading
 } from "@/lib/imageCreateToolResult.js";
-
 const props = defineProps({
   item: {
     type: Object,
@@ -165,9 +164,6 @@ const props = defineProps({
 
 defineEmits(["toggle", "approve", "deny"]);
 
-/** Backend marker; not shown as tool output. */
-const TOOL_CALL_CANCELED = "This tool call was canceled.";
-
 const imageLoadFailed = ref(false);
 
 const isImageCreate = computed(() => isImageCreateTool(props.item.toolName));
@@ -187,14 +183,12 @@ const imageCreateMediaMode = computed(() => {
   return null;
 });
 
-function normalizeResultRaw(raw) {
+function trimResultRaw(raw) {
   if (raw == null) return "";
-  const trimmed = String(raw).trim();
-  if (!trimmed || trimmed === TOOL_CALL_CANCELED) return "";
-  return trimmed;
+  return String(raw).trim();
 }
 
-const hasToolResult = computed(() => normalizeResultRaw(props.item.result).length > 0);
+const hasToolResult = computed(() => trimResultRaw(props.item.result).length > 0);
 
 const showCanceledEmptyState = computed(
   () => isToolCallCanceled(props.item.status) && !hasToolResult.value
@@ -205,7 +199,7 @@ const waitingResultLabel = computed(() =>
 );
 
 const formattedResult = computed(() => {
-  const trimmed = normalizeResultRaw(props.item.result);
+  const trimmed = trimResultRaw(props.item.result);
   try {
     return JSON.stringify(JSON.parse(trimmed), null, 2);
   } catch {

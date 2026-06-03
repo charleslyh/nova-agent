@@ -89,7 +89,7 @@ impl TypedTool for ImageEditTool {
         })?;
         responder
             .send_text(sanitize_image_api_response(&body))
-            .await;
+            .await?;
         Ok(())
     }
 }
@@ -98,15 +98,19 @@ impl TypedTool for ImageEditTool {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use moray_core::ToolCallResponder;
+    use moray_core::{ToolCallResponder, ToolboxError};
 
     struct NoopResponder;
 
     #[async_trait]
     impl ToolCallResponder for NoopResponder {
-        async fn send_extra(&self, _: serde_json::Value) {}
+        async fn send_extra(&self, _: serde_json::Value) -> Result<(), ToolboxError> {
+            Ok(())
+        }
 
-        async fn send_text(&self, _: String) {}
+        async fn send_text(&self, _: String) -> Result<(), ToolboxError> {
+            Ok(())
+        }
     }
 
     #[tokio::test]

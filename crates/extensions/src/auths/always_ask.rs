@@ -53,12 +53,20 @@ impl ToolCallAuthorizer for AlwaysAsking {
             .lock()
             .expect("always-ask pending-auth mutex poisoned")
             .insert(call_id.to_string(), tx);
-        responder
+        if responder
             .send_extra(json!({
                 "tool_name": tool_name,
                 "arguments": args,
             }))
-            .await;
+            .await
+            .is_err()
+        {
+            self.pending_auth
+                .lock()
+                .expect("always-ask pending-auth mutex poisoned")
+                .remove(call_id);
+            return false;
+        }
         rx.await.unwrap_or(false)
     }
 

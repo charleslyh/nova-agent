@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use moray_core::{MorayError, ToolCallResponder, TypedTool};
+
 use serde::Deserialize;
 
 pub struct CalcTool;
@@ -19,13 +20,13 @@ impl TypedTool for CalcTool {
         args: CalcArgs,
         responder: &dyn ToolCallResponder,
     ) -> Result<(), MorayError> {
-        let text = match eval_expr(&args.expression) {
-            Ok(value) => serde_json::to_string(&serde_json::json!({ "value": value }))
-                .map_err(|e| MorayError::Message(format!("calc: serialization failed: {e}")))?,
-            Err(msg) => serde_json::to_string(&serde_json::json!({ "error": msg }))
-                .map_err(|e| MorayError::Message(format!("calc: serialization failed: {e}")))?,
+        let payload = match eval_expr(&args.expression) {
+            Ok(value) => serde_json::json!({ "value": value }),
+            Err(msg) => serde_json::json!({ "error": msg }),
         };
-        responder.send_text(text).await;
+        let text = serde_json::to_string(&payload)
+            .map_err(|e| MorayError::Message(format!("calc: serialization failed: {e}")))?;
+        responder.send_text(text).await?;
         Ok(())
     }
 }

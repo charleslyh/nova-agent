@@ -49,7 +49,7 @@ impl TypedTool for FileWriteTool {
                 args.content.len(),
                 path.display()
             ))
-            .await;
+            .await?;
         Ok(())
     }
 }

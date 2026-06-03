@@ -327,8 +327,14 @@ async fn react_once(
                         Some(toolbox.begin_group(sink, cancellation.clone()).await);
                 }
 
-                let group = tool_call_group.expect("group started on first tool call");
-                // TODO: 考虑错误恢复，例如根据 tool_call.name 找不到工具，arguments 格式错误等。以便增强 Agent 的健壮性。
+                let Some(group) = tool_call_group else {
+                    warn!("tool call chunk arrived before group was started");
+                    loop_exit = Some(AgentFinishKind::Failed {
+                        reason: "internal error: tool call group not initialized".to_string(),
+                    });
+                    break 'completion;
+                };
+
                 if let Err(e) = toolbox.call_tool(group, tool_call).await {
                     loop_exit = Some(toolbox_err(e));
                     break 'completion;

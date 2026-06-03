@@ -320,17 +320,15 @@ impl WeComSessionOutbound {
                 }
                 ToolCallEventKind::Finished { status } => {
                     let call_id = event.call_id.clone();
+                    let mut state = self.state.lock().await;
                     if *status == ToolCallStatus::Canceled {
-                        let mut state = self.state.lock().await;
                         state.tool_outputs.remove(&call_id);
                         state.tool_displays.remove(&call_id);
                         return;
                     }
                     let is_error = *status == ToolCallStatus::Error;
-                    let output = {
-                        let mut state = self.state.lock().await;
-                        state.tool_outputs.remove(&call_id).unwrap_or_default()
-                    };
+                    let output = state.tool_outputs.remove(&call_id).unwrap_or_default();
+                    drop(state);
                     let result = if is_error {
                         serde_json::json!({ "error": output })
                     } else {

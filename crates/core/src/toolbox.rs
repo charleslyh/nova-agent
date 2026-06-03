@@ -44,10 +44,24 @@ pub enum ToolboxError {
 
     #[error("no pending tool authorization for call_id {call_id}")]
     NoPendingAuthorization { call_id: String },
+
+    /// [`ToolCallEventSink::emit`] rejected the event (agent stream closed or backpressure).
+    #[error("tool call event sink closed")]
+    EventSinkClosed,
+
+    /// Local output path failed before reaching the sink (e.g. stdout flush in CLI).
+    #[error("failed to deliver tool call output: {reason}")]
+    DeliverFailed { reason: String },
 }
 
 /// Authorization failures from [`ToolCallAuthorizer::reply`] (subset of [`ToolboxError`]).
 pub type ToolCallAuthError = ToolboxError;
+
+impl From<ToolboxError> for MorayError {
+    fn from(value: ToolboxError) -> Self {
+        MorayError::Message(value.to_string())
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Tool-call events
@@ -165,7 +179,9 @@ where
         let args = serde_json::from_value(args).map_err(|e| {
             MorayError::Message(format!("{tool_name}: invalid JSON arguments: {e}"))
         })?;
-        self.run(args, responder).await
+        self.run(args, responder)
+            .await
+            .map_err(|e| MorayError::Message(format!("{tool_name}: {e}")))
     }
 }
 
@@ -177,10 +193,10 @@ where
 #[async_trait]
 pub trait ToolCallResponder: Send + Sync {
     /// Out-of-band metadata (authorization prompts, progress). Not model `tool` message content.
-    async fn send_extra(&self, data: Value);
+    async fn send_extra(&self, data: Value) -> Result<(), ToolboxError>;
 
     /// Model-visible incremental output.
-    async fn send_text(&self, text: String);
+    async fn send_text(&self, text: String) -> Result<(), ToolboxError>;
 }
 
 /// Optional gate before tool execution within a [`ToolCallGroup`].
@@ -282,23 +298,33 @@ impl ToolCallTracker {
 
 #[async_trait]
 impl ToolCallResponder for ToolCallTracker {
-    async fn send_extra(&self, data: Value) {
-        let _ = self
+    async fn send_extra(&self, data: Value) -> Result<(), ToolboxError> {
+        if self
             .emit(ToolCallEvent::extra(
                 self.request.call_id.clone(),
                 data,
             ))
-            .await;
+            .await
+        {
+            Ok(())
+        } else {
+            Err(ToolboxError::EventSinkClosed)
+        }
     }
 
-    async fn send_text(&self, text: String) {
+    async fn send_text(&self, text: String) -> Result<(), ToolboxError> {
         self.content.lock().await.push_str(&text);
-        let _ = self
+        if self
             .emit(ToolCallEvent::payload(
                 self.request.call_id.clone(),
                 text,
             ))
-            .await;
+            .await
+        {
+            Ok(())
+        } else {
+            Err(ToolboxError::EventSinkClosed)
+        }
     }
 }
 
@@ -424,7 +450,7 @@ async fn run_call(
     };
 
     if !allowed {
-        tracker
+        let _ = tracker
             .send_text(TOOL_CALL_DENIED_BY_USER.to_string())
             .await;
         let _ = tracker.finish(ToolCallStatus::Error).await;
@@ -454,7 +480,7 @@ async fn run_call(
     } {
         Ok(()) => ToolCallStatus::Success,
         Err(e) => {
-            tracker
+            let _ = tracker
                 .send_text(format!("tool error: {e}"))
                 .await;
             ToolCallStatus::Error
@@ -686,12 +712,20 @@ mod tests {
                 .lock()
                 .expect("ask-user pending-auth mutex poisoned")
                 .insert(call_id.to_string(), tx);
-            responder
+            if responder
                 .send_extra(json!({
                     "tool_name": tool_name,
                     "arguments": args,
                 }))
-                .await;
+                .await
+                .is_err()
+            {
+                self.pending_auth
+                    .lock()
+                    .expect("ask-user pending-auth mutex poisoned")
+                    .remove(call_id);
+                return false;
+            }
             rx.await.unwrap_or(false)
         }
 
@@ -745,7 +779,7 @@ mod tests {
                     "echo:{}",
                     serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string())
                 ))
-                .await;
+                .await?;
             Ok(())
         }
     }
@@ -763,7 +797,7 @@ mod tests {
             responder: &dyn ToolCallResponder,
         ) -> Result<(), MorayError> {
             tokio::time::sleep(Duration::from_secs(60)).await;
-            responder.send_text("slow".into()).await;
+            responder.send_text("slow".into()).await?;
             Ok(())
         }
     }
@@ -799,13 +833,27 @@ mod tests {
         ]
     }
 
+    fn build_test_toolbox(
+        auth: Arc<dyn ToolCallAuthorizer>,
+        manifests: Vec<ToolManifest>,
+        tools: Vec<Arc<dyn Tool>>,
+    ) -> Toolbox {
+        let mut builder = ToolboxBuilder::new().manifests(manifests).auth(auth);
+        for tool in tools {
+            builder = builder.tool(tool);
+        }
+        builder.build()
+    }
+
     fn make_toolbox(auth: Arc<dyn ToolCallAuthorizer>) -> Toolbox {
-        ToolboxBuilder::new()
-            .manifests(test_manifests())
-            .tool(Arc::new(EchoTool) as Arc<dyn Tool>)
-            .tool(Arc::new(FailTool) as Arc<dyn Tool>)
-            .auth(auth)
-            .build()
+        build_test_toolbox(
+            auth,
+            test_manifests(),
+            vec![
+                Arc::new(EchoTool) as Arc<dyn Tool>,
+                Arc::new(FailTool) as Arc<dyn Tool>,
+            ],
+        )
     }
 
     async fn collect_call_events(
@@ -847,6 +895,22 @@ mod tests {
             tokio::task::yield_now().await;
         }
         panic!("toolbox never registered pending request {call_id}");
+    }
+
+    async fn recv_until_started(
+        rx: &mut mpsc::Receiver<ToolCallEvent>,
+        call_id: &str,
+        buffer: &mut Vec<ToolCallEvent>,
+    ) {
+        while let Some(ev) = rx.recv().await {
+            let started = ev.call_id == call_id
+                && matches!(ev.kind, ToolCallEventKind::Started);
+            buffer.push(ev);
+            if started {
+                return;
+            }
+        }
+        panic!("tool call stream closed before Started for {call_id}");
     }
 
     #[tokio::test]
@@ -1018,15 +1082,15 @@ mod tests {
     }
 
     fn make_toolbox_with_slow(auth: Arc<dyn ToolCallAuthorizer>) -> Toolbox {
-        ToolboxBuilder::new()
-            .manifests(vec![ToolManifest {
+        build_test_toolbox(
+            auth,
+            vec![ToolManifest {
                 name: "slow".into(),
                 description: "".into(),
                 parameters: r#"{"type":"object"}"#.into(),
-            }])
-            .tool(Arc::new(SlowTool) as Arc<dyn Tool>)
-            .auth(auth)
-            .build()
+            }],
+            vec![Arc::new(SlowTool) as Arc<dyn Tool>],
+        )
     }
 
     #[tokio::test]
@@ -1100,16 +1164,15 @@ mod tests {
             )
             .await
             .expect("start call");
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let mut events = Vec::new();
+        recv_until_started(&mut rx, "cy", &mut events).await;
         turn.cancel();
-        let recv_fut = async {
-            let mut out = Vec::new();
+        let drain = async {
             while let Some(ev) = rx.recv().await {
-                out.push(ev);
+                events.push(ev);
             }
-            out
         };
-        let (events, end_result) = tokio::join!(recv_fut, tb_arc.end_group(group));
+        let (_, end_result) = tokio::join!(drain, tb_arc.end_group(group));
         end_result.expect("end group");
         assert!(events.iter().any(|ev| matches!(
             ev,
