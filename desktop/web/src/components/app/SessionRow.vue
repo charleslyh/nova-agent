@@ -43,18 +43,18 @@
         <path stroke-linecap="round" d="M9.5 10h5" />
       </svg>
     </span>
-    <span class="sidebar-entry__label" :title="rowTitle">
-      {{ rowLabel }}
+    <span class="sidebar-entry__label-wrap">
+      <span class="sidebar-entry__label" :title="rowTitle">{{ rowLabel }}</span>
+      <button
+        type="button"
+        class="session-delete-btn"
+        :aria-label="isChannelRow ? '删除频道' : '删除会话'"
+        :title="isChannelRow ? '删除频道' : '删除会话'"
+        @click.stop="$emit('delete', item.sessionId)"
+      >
+        ×
+      </button>
     </span>
-    <button
-      type="button"
-      class="session-delete-btn"
-      :aria-label="isChannelRow ? '删除频道' : '删除会话'"
-      :title="isChannelRow ? '删除频道' : '删除会话'"
-      @click.stop="$emit('delete', item.sessionId)"
-    >
-      ×
-    </button>
   </div>
 </template>
 
@@ -91,43 +91,53 @@ const rowTitle = computed(() => {
 </script>
 
 <style scoped>
+.sidebar-entry--session {
+  gap: var(--sidebar-entry-gap, 8px);
+  padding: var(--sidebar-entry-padding, 5px 8px);
+  border-radius: var(--sidebar-entry-radius, 8px);
+  font-family: var(--sidebar-font-family, inherit);
+  font-size: var(--sidebar-entry-font-size, 13px);
+  font-weight: var(--sidebar-entry-font-weight, 400);
+  line-height: var(--sidebar-entry-line-height, 1.4);
+  letter-spacing: var(--sidebar-entry-letter-spacing, -0.01em);
+  color: var(--sidebar-entry-text, #2b2b30);
+}
+
 .sidebar-entry {
   display: flex;
   align-items: center;
-  gap: 10px;
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 12px;
   border: 1px solid transparent;
-  border-radius: 10px;
   background: transparent;
-  color: #333;
-  font-size: 14px;
-  font-weight: 500;
   cursor: pointer;
+  transition: background 0.12s ease;
 }
 
 .sidebar-entry:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--sidebar-entry-hover-bg, rgba(0, 0, 0, 0.05));
 }
 
 .sidebar-entry.is-active {
-  background: rgba(255, 255, 255, 0.55);
-  font-weight: 600;
+  background: var(--sidebar-entry-active-bg, #e6e6ea);
+  box-shadow: 0 0 8px 1px var(--sidebar-entry-active-border, #e6e6ea);
+  font-weight: 700;
 }
 
 .sidebar-entry__icon {
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
+  width: var(--sidebar-entry-icon-size, 16px);
+  height: var(--sidebar-entry-icon-size, 16px);
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--sidebar-entry-icon-color, #5c5c66);
 }
 
+.sidebar-entry__icon :deep(.sidebar-entry__icon-svg),
 .sidebar-entry__icon-svg {
-  width: 18px;
-  height: 18px;
+  width: var(--sidebar-entry-icon-size, 16px);
+  height: var(--sidebar-entry-icon-size, 16px);
 }
 
 .sidebar-entry__icon-svg--spinner {
@@ -140,28 +150,48 @@ const rowTitle = computed(() => {
   }
 }
 
-.sidebar-entry__label {
+.sidebar-entry__label-wrap {
   flex: 1;
   min-width: 0;
+  position: relative;
+}
+
+.sidebar-entry__label {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+}
+
+.sidebar-entry:hover .sidebar-entry__label,
+.sidebar-entry.is-active .sidebar-entry__label {
+  padding-right: 22px;
 }
 
 .session-delete-btn {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: #888;
-  font-size: 16px;
+  font-family: inherit;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
   opacity: 0;
+  transition:
+    opacity 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .sidebar-entry:hover .session-delete-btn,
@@ -170,7 +200,7 @@ const rowTitle = computed(() => {
 }
 
 .session-delete-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
-  color: #333;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--sidebar-entry-text, #1a1a1e);
 }
 </style>

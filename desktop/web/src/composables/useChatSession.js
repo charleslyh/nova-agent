@@ -5,7 +5,6 @@ import {
   channelTypeBySessionIdFromInstances,
   mapChannelInstance,
 } from "@/channelInstances.js";
-import { useSkillHub } from "@/composables/useSkillHub.js";
 
 export function useChatSession() {
   const transcript = ref([]);
@@ -402,12 +401,6 @@ export function useChatSession() {
   const normalSessions = computed(() => {
     const channelIds = channelSessionIdSet();
     return sessions.value.filter((s) => !channelIds.has(s.sessionId));
-  });
-
-  const activeSession = computed(() => {
-    const id = activeSessionId.value;
-    if (!id) return null;
-    return sessions.value.find((s) => s.sessionId === id) ?? null;
   });
 
   const isChannelSession = computed(() => {
