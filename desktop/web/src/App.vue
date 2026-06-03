@@ -12,15 +12,22 @@
       @new-session="onNewSession"
     />
 
-    <div class="chat-main">
-      <AppTitlebar
-        :show-actions="!isWelcome()"
-        :show-channel-settings="!!activeChannelSessionIdForSettings"
-        @reset="onResetSession"
-        @open-channel-settings="openChannelSettings"
-      />
+    <div
+      class="main-and-drawer"
+      :class="{ 'drawer-open': drawerOpen }"
+    >
+      <div class="chat-main">
+        <AppTitlebar
+          :show-actions="!isWelcome()"
+          :show-channel-settings="!!activeChannelSessionIdForSettings"
+          :show-session-detail="!!activeSessionId"
+          :session-detail-open="drawerOpen"
+          @reset="onResetSession"
+          @open-channel-settings="openChannelSettings"
+          @toggle-session-detail="toggleDrawer"
+        />
 
-      <section class="content-layout">
+        <section class="content-layout">
         <div v-if="isWelcome()" class="welcome-prompt content-lane">
           <h1 class="welcome-prompt__title">我们聊些什么？</h1>
         </div>
@@ -54,7 +61,20 @@
             @select-agent="onSelectComposerAgent"
           />
         </div>
-      </section>
+        </section>
+      </div>
+
+      <div
+        v-if="drawerOpen && activeSessionId"
+        class="session-detail-drawer"
+      >
+        <SessionDetailPanel
+          :session-id="activeSessionId"
+          :open="drawerOpen"
+          :status="status"
+          :fetch-workspace="getSessionWorkspace"
+        />
+      </div>
     </div>
 
     <SettingsDialog
@@ -125,15 +145,17 @@
 </template>
 
 <script setup>
-import { onMounted } from "vue";
+import { onMounted, watch } from "vue";
 import SettingsDialog from "@/components/settings/SettingsDialog.vue";
 import AppSidebar from "@/components/app/AppSidebar.vue";
 import AppTitlebar from "@/components/app/AppTitlebar.vue";
+import SessionDetailPanel from "@/components/app/SessionDetailPanel.vue";
 import ChannelConfigModals from "@/components/channels/ChannelConfigModals.vue";
 import ChannelSessionNotice from "@/components/chat/ChannelSessionNotice.vue";
 import Composer from "@/components/chat/Composer.vue";
 import Stream from "@/components/chat/Stream.vue";
 import { useChatSession } from "@/composables/useChatSession";
+import { useSessionDetailDrawer } from "@/composables/useSessionDetailDrawer";
 
 const {
   transcript,
@@ -188,8 +210,15 @@ const {
   setSessionAgent,
   openWelcome,
   activateSession,
-  requestSessionDelete
+  requestSessionDelete,
+  getSessionWorkspace
 } = useChatSession();
+
+const { drawerOpen, toggleDrawer, closeDrawer } = useSessionDetailDrawer();
+
+watch(activeSessionId, () => {
+  closeDrawer();
+});
 
 async function onSelectComposerAgent(agentId) {
   try {
@@ -216,6 +245,7 @@ async function onDeleteSession(sessionId) {
 }
 
 function onNewSession() {
+  closeDrawer();
   openWelcome();
 }
 
@@ -268,12 +298,33 @@ body,
   background: #fcfcfc;
 }
 
+.main-and-drawer {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+.main-and-drawer.drawer-open .chat-main {
+  min-width: 0;
+}
+
 .chat-main {
   flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+.session-detail-drawer {
+  width: 320px;
+  flex-shrink: 0;
+  min-height: 0;
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
   overflow: hidden;
 }
 

@@ -1075,12 +1075,13 @@ parameters = '{}'
         authorizer: Arc<dyn moray_core::ToolCallAuthorizer>,
         sessions_dir: std::path::PathBuf,
     ) -> crate::error::Result<Arc<SondaSessionHarness>> {
+        let workspace = Arc::new(crate::SondaSessionWorkspace::new(sessions_dir));
         Ok(Arc::new(SondaSessionHarness::new(
             settings_store,
             session_catalog,
             authorizer,
             testing_tools_catalog(),
-            sessions_dir,
+            workspace,
             testing_registrations(testing_shell_env()),
         )?))
     }

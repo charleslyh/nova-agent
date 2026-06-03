@@ -4,6 +4,7 @@
 mod error;
 mod harness;
 mod session_catalog;
+mod session_workspace;
 mod session_factory;
 mod settings_store;
 mod skill_center;
@@ -18,6 +19,9 @@ pub use error::{
 };
 pub use harness::{SondaSessionHarness, SondaToolCatalogEntry, SondaToolRegistration};
 pub use session_catalog::{SessionCatalogEntry, SessionCatalogError, SondaSessionCatalog};
+pub use session_workspace::{
+    SessionWorkspaceEntry, SessionWorkspacePath, SessionWorkspaceTree, SondaSessionWorkspace,
+};
 pub use session_factory::SondaSessionFactory;
 pub use settings_store::{
     SondaSettingsAgentEntry, SondaSettingsCompletionEntry, SondaSettingsFile, SondaSettingsStore,

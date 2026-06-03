@@ -16,13 +16,15 @@ use crate::error::{response_with, session_error_response, sonda_error_response};
 #[rustfmt::skip]
 pub(super) fn router() -> Router<Arc<Sonda>> {
     Router::new()
-        .route("/",                    get(sessions_catalog).post(sessions_create))
-        .route("/{session_id}",        delete(sessions_delete))
-        .route("/{session_id}/agent",  get(sessions_get_agent).put(sessions_set_agent))
-        .route("/{session_id}/submit", post(sessions_submit))
-        .route("/{session_id}/cancel", post(sessions_cancel))
-        .route("/{session_id}/reset",  post(sessions_reset))
-        .route("/{session_id}/events", get(sessions_get_events))
+        .route("/",                            get(sessions_catalog).post(sessions_create))
+        .route("/{session_id}",                delete(sessions_delete))
+        .route("/{session_id}/agent",          get(sessions_get_agent).put(sessions_set_agent))
+        .route("/{session_id}/submit",         post(sessions_submit))
+        .route("/{session_id}/cancel",         post(sessions_cancel))
+        .route("/{session_id}/reset",          post(sessions_reset))
+        .route("/{session_id}/events",         get(sessions_get_events))
+        .route("/{session_id}/workspace/path", get(sessions_get_workspace_path))
+        .route("/{session_id}/workspace",      get(sessions_get_workspace))
 }
 
 #[derive(Serialize)]
@@ -188,4 +190,45 @@ async fn sessions_get_events(
         }
     };
     Sse::new(event_stream).into_response()
+}
+
+async fn sessions_get_workspace_path(
+    State(sonda): State<Arc<Sonda>>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    if sonda
+        .session_catalog
+        .get_session_agent_id(session_id.as_str())
+        .is_err()
+    {
+        return response_with(StatusCode::NOT_FOUND, "unknown chat session").into_response();
+    }
+
+    Json(
+        sonda
+            .session_workspace
+            .session_workspace_path(session_id.as_str()),
+    )
+    .into_response()
+}
+
+async fn sessions_get_workspace(
+    State(sonda): State<Arc<Sonda>>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    if sonda
+        .session_catalog
+        .get_session_agent_id(session_id.as_str())
+        .is_err()
+    {
+        return response_with(StatusCode::NOT_FOUND, "unknown chat session").into_response();
+    }
+
+    match sonda
+        .session_workspace
+        .list_session_tree(session_id.as_str())
+    {
+        Ok(tree) => Json(tree).into_response(),
+        Err(e) => sonda_error_response(e),
+    }
 }

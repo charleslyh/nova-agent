@@ -2,7 +2,6 @@
 
 mod window_layout;
 
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{App, AppHandle, Manager, RunEvent, State};
@@ -12,29 +11,12 @@ use tracing::warn;
 use moray_desktop_client::bundle;
 use moray_desktop_client::log::init_tracing;
 use moray_desktop_client::sonda;
-use moray_desktop_client::sonda::SondaRuntimePaths;
 use moray_desktop_server::SondaGateway;
 use moray_sonda::Sonda;
 
 struct SharedServer {
     gateway: Arc<Mutex<Option<SondaGateway>>>,
     shutting_down: Arc<AtomicBool>,
-}
-
-struct AppPaths {
-    sessions_dir: PathBuf,
-}
-
-#[tauri::command]
-fn get_session_workspace_dir(
-    session_id: String,
-    paths: State<'_, AppPaths>,
-) -> Result<String, String> {
-    let id = session_id.trim();
-    if id.is_empty() {
-        return Err("session_id must not be empty".into());
-    }
-    Ok(paths.sessions_dir.join(id).display().to_string())
 }
 
 #[tauri::command]
@@ -74,12 +56,6 @@ fn setup_window_layout(app: &App) {
     );
 }
 
-fn register_app_paths(app: &App, runtime_paths: &SondaRuntimePaths) {
-    app.manage(AppPaths {
-        sessions_dir: runtime_paths.sessions_dir.clone(),
-    });
-}
-
 fn start_gateway(gateway: Arc<Mutex<Option<SondaGateway>>>, sonda: Arc<Sonda>) {
     tauri::async_runtime::block_on(async move {
         let mut guard = gateway.lock().await;
@@ -96,9 +72,6 @@ fn startup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
 
     let paths = bundle::resolve_runtime_paths(app.handle())
         .expect("failed to resolve runtime paths");
-
-    // It is used to solve the problem that the relative path image cannot be rendered in markdown.
-    register_app_paths(app, &paths);
 
     let sonda = Arc::new(sonda::build_sonda(&paths).expect("sonda build failed"));
     app.manage(sonda.clone());
@@ -159,12 +132,10 @@ fn main() {
     init_process();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(window_layout::init())
         .manage(create_shared_server())
-        .invoke_handler(tauri::generate_handler![
-            get_server_url,
-            get_session_workspace_dir
-        ])
+        .invoke_handler(tauri::generate_handler![get_server_url])
         .setup(startup_app)
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

@@ -20,6 +20,8 @@ export function createChatClient(impl) {
     getTools: impl.getTools,
     getSessionAgent: impl.getSessionAgent,
     setSessionAgent: impl.setSessionAgent,
+    getSessionWorkspace: impl.getSessionWorkspace,
+    getSessionWorkspacePath: impl.getSessionWorkspacePath,
     updateAgent: impl.updateAgent,
     listChannels: impl.listChannels,
     getChannelConfig: impl.getChannelConfig,
@@ -147,6 +149,16 @@ export async function createHttpChatClient() {
         method: "PUT",
         body: JSON.stringify({ agent_id: agentId })
       });
+    },
+
+    async getSessionWorkspace(sessionId) {
+      const sid = encodeURIComponent(sessionId);
+      return request(`${baseUrl}/sessions/${sid}/workspace`, { method: "GET" });
+    },
+
+    async getSessionWorkspacePath(sessionId) {
+      const sid = encodeURIComponent(sessionId);
+      return request(`${baseUrl}/sessions/${sid}/workspace/path`, { method: "GET" });
     },
 
     async updateAgent(agentId, { name, completion_id: completionId, allowed_tools: allowedTools, character }) {

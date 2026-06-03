@@ -7,8 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     SkillCenter, SondaSessionCatalog, SondaSessionFactory, SondaSessionHarness,
-    SondaSessionTranscripts, SondaSettingsStore, SondaSnapshot, SondaToolCatalog,
-    SondaToolRegistration, UnregisterSkillError,
+    SondaSessionTranscripts, SondaSessionWorkspace, SondaSettingsStore, SondaSnapshot,
+    SondaToolCatalog, SondaToolRegistration, UnregisterSkillError,
 };
 use moray_skillhub::{SkillHub, SkillHubError};
 use serde::Serialize;
@@ -59,6 +59,7 @@ pub struct Sonda {
     pub skill_center: SkillCenter,
     pub session_catalog: Arc<SondaSessionCatalog>,
     pub session_transcripts: Arc<SondaSessionTranscripts>,
+    pub session_workspace: Arc<SondaSessionWorkspace>,
     pub harness: Arc<SondaSessionHarness>,
     pub skill_hub: SkillHub,
     pub authorizer: Arc<dyn ToolCallAuthorizer>,
@@ -75,6 +76,7 @@ impl Sonda {
         skill_center: SkillCenter,
         session_catalog: Arc<SondaSessionCatalog>,
         session_transcripts: Arc<SondaSessionTranscripts>,
+        session_workspace: Arc<SondaSessionWorkspace>,
         harness: Arc<SondaSessionHarness>,
         skill_hub: SkillHub,
         authorizer: Arc<dyn ToolCallAuthorizer>,
@@ -88,6 +90,7 @@ impl Sonda {
             skill_center,
             session_catalog,
             session_transcripts,
+            session_workspace,
             harness,
             skill_hub,
             authorizer,
@@ -419,12 +422,14 @@ impl SondaBuilder {
 
         let authorizer = create_authorizer(settings_store.as_ref());
 
+        let session_workspace = Arc::new(SondaSessionWorkspace::new(harness_sessions_dir));
+
         let harness = Arc::new(SondaSessionHarness::new(
             settings_store.clone(),
             session_catalog.clone(),
             authorizer.clone(),
             harness_tool_catalog,
-            harness_sessions_dir,
+            session_workspace.clone(),
             harness_tools,
         )?);
 
@@ -459,6 +464,7 @@ impl SondaBuilder {
             skill_center,
             session_catalog,
             session_transcripts,
+            session_workspace,
             harness,
             skill_hub,
             authorizer,

@@ -10,7 +10,9 @@ use moray_session::{Harness, SessionError};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{InvalidContent, Result, SondaError};
-use crate::{SondaSessionCatalog, SondaSettingsStore, SondaToolCatalog};
+use crate::{
+    SondaSessionCatalog, SondaSessionWorkspace, SondaSettingsStore, SondaToolCatalog,
+};
 
 /// Public catalog row for settings UI (`GET /settings/catalog`).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -21,7 +23,7 @@ pub struct SondaToolCatalogEntry {
 
 /// One registered tool id and its per-session instance builder.
 ///
-/// [`SondaSessionHarness::create_toolbox`] passes `session_dir` (`sessions_dir.join(session_id)`).
+/// [`SondaSessionHarness::create_toolbox`] passes per-session dir from [`SondaSessionWorkspace`].
 /// Tools that do not use a workspace may ignore it (e.g. `|_|`).
 pub struct SondaToolRegistration {
     pub name: &'static str,
@@ -49,7 +51,7 @@ pub struct SondaSessionHarness {
     session_catalog: Arc<SondaSessionCatalog>,
     authorizer: Arc<dyn ToolCallAuthorizer>,
     catalog: SondaToolCatalog,
-    sessions_dir: PathBuf,
+    workspace: Arc<SondaSessionWorkspace>,
     registrations: Vec<SondaToolRegistration>,
 }
 
@@ -59,7 +61,7 @@ impl SondaSessionHarness {
         session_catalog: Arc<SondaSessionCatalog>,
         authorizer: Arc<dyn ToolCallAuthorizer>,
         catalog: SondaToolCatalog,
-        sessions_dir: impl Into<PathBuf>,
+        workspace: Arc<SondaSessionWorkspace>,
         registrations: Vec<SondaToolRegistration>,
     ) -> Result<Self> {
         if registrations.is_empty() {
@@ -91,13 +93,9 @@ impl SondaSessionHarness {
             session_catalog,
             authorizer,
             catalog,
-            sessions_dir: sessions_dir.into(),
+            workspace,
             registrations,
         })
-    }
-
-    fn session_dir(&self, session_id: &str) -> PathBuf {
-        self.sessions_dir.join(session_id)
     }
 
     /// Registered tools for settings UI (`GET /tools`), in registration order.
@@ -172,7 +170,7 @@ impl Harness for SondaSessionHarness {
             .map_err(|e| SessionError::from(moray_core::MorayError::from(e)))?;
 
         let allow: HashSet<&str> = allowed_tools.iter().map(String::as_str).collect();
-        let session_dir = self.session_dir(session_id);
+        let session_dir = self.workspace.session_dir(session_id);
 
         let mut manifests = Vec::new();
         let mut tools = Vec::new();

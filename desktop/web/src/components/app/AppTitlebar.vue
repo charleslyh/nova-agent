@@ -17,6 +17,30 @@
     >
       重置会话
     </button>
+    <button
+      v-if="showSessionDetail"
+      type="button"
+      class="titlebar-icon-btn"
+      :class="{ 'titlebar-icon-btn--active': sessionDetailOpen }"
+      aria-label="会话详情"
+      :aria-expanded="sessionDetailOpen"
+      @click="$emit('toggle-session-detail')"
+    >
+      <svg
+        class="titlebar-icon"
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="3" y="4" width="18" height="16" rx="3" />
+        <path d="M14 4v16" />
+      </svg>
+    </button>
   </header>
 </template>
 
@@ -29,10 +53,18 @@ defineProps({
   showChannelSettings: {
     type: Boolean,
     default: false
+  },
+  showSessionDetail: {
+    type: Boolean,
+    default: false
+  },
+  sessionDetailOpen: {
+    type: Boolean,
+    default: false
   }
 });
 
-defineEmits(["reset", "open-channel-settings"]);
+defineEmits(["reset", "open-channel-settings", "toggle-session-detail"]);
 </script>
 
 <style scoped>
@@ -72,5 +104,38 @@ defineEmits(["reset", "open-channel-settings"]);
 
 .titlebar-btn:hover {
   background: #f5f5f7;
+}
+
+.titlebar-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #5a5a5a;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  flex-shrink: 0;
+}
+
+.titlebar-icon-btn:hover {
+  background: #f0f0f2;
+  border-color: #e0e0e4;
+}
+
+.titlebar-icon-btn--active {
+  background: #ebebef;
+  border-color: #d0d0d6;
+  color: #212121;
+}
+
+.titlebar-icon {
+  width: 18px;
+  height: 18px;
 }
 </style>

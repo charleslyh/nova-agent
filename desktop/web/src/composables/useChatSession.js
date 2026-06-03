@@ -1,5 +1,4 @@
 import { computed, ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { createHttpChatClient } from "@/chat-client";
 import {
   channelTypeBySessionIdFromInstances,
@@ -521,9 +520,10 @@ export function useChatSession() {
       return;
     }
     try {
-      sessionWorkspaceDir.value = await invoke("get_session_workspace_dir", {
-        sessionId
-      });
+      const body = await client.getSessionWorkspacePath(sessionId);
+      const path = body?.path;
+      sessionWorkspaceDir.value =
+        typeof path === "string" && path.length > 0 ? path : null;
     } catch {
       sessionWorkspaceDir.value = null;
     }
@@ -925,6 +925,8 @@ export function useChatSession() {
     createChannel: (payload) => client.createChannel(payload),
     getSettingsCatalog: () => client.getSettingsCatalog(),
     getSessionAgent: (sessionId) => client.getSessionAgent(sessionId),
-    setSessionAgent: (sessionId, agentId) => client.setSessionAgent(sessionId, agentId)
+    setSessionAgent: (sessionId, agentId) => client.setSessionAgent(sessionId, agentId),
+    getSessionWorkspace: (sessionId) => client.getSessionWorkspace(sessionId),
+    getSessionWorkspacePath: (sessionId) => client.getSessionWorkspacePath(sessionId)
   };
 }
