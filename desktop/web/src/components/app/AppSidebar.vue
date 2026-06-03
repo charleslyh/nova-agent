@@ -38,13 +38,20 @@
           :aria-selected="sessionListTab === 'channel'"
           :class="{ 'is-active': sessionListTab === 'channel' }"
           @click="sessionListTab = 'channel'"
+          @contextmenu.prevent="openChannelMenuAtPointer"
         >
           频道
         </button>
       </div>
 
       <template v-if="sessionListTab === 'channel'">
-        <button type="button" class="sidebar-entry sidebar-entry--new no-drag" @click="$emit('add-channel')">
+        <button
+          type="button"
+          class="sidebar-entry sidebar-entry--new no-drag"
+          aria-haspopup="menu"
+          :aria-expanded="channelMenuOpen ? 'true' : 'false'"
+          @click.stop="toggleChannelMenuFromButton"
+        >
           <span class="sidebar-entry__icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" class="sidebar-entry__icon-svg" fill="none" stroke="currentColor" stroke-width="1.75">
               <path stroke-linecap="round" d="M12 5v14M5 12h14" />
@@ -92,12 +99,24 @@
         </div>
       </template>
     </div>
+
+    <ContextMenu
+      :open="channelMenuOpen"
+      :x="channelMenuPos.x"
+      :y="channelMenuPos.y"
+      :items="CHANNEL_CREATE_TYPES"
+      aria-label="新建频道"
+      @close="closeChannelMenu"
+      @select="onPickChannelType"
+    />
   </aside>
 </template>
 
 <script setup>
-import { ref, watch } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
+import ContextMenu from "@/components/app/ContextMenu.vue";
 import SessionRow from "@/components/app/SessionRow.vue";
+import { CHANNEL_CREATE_TYPES } from "@/channelTypes.js";
 
 const props = defineProps({
   channelSessions: {
@@ -119,6 +138,68 @@ const props = defineProps({
 });
 
 const sessionListTab = ref("normal");
+const channelMenuOpen = ref(false);
+const channelMenuPos = ref({ x: 0, y: 0 });
+
+const emit = defineEmits([
+  "open-settings",
+  "pick-channel-type",
+  "select-session",
+  "delete-session",
+  "new-session"
+]);
+
+function closeChannelMenu() {
+  channelMenuOpen.value = false;
+}
+
+/** 菜单锚定在触发按钮右侧，略向左贴齐，避免盖住下方频道会话列表 */
+function openChannelMenuAt(el) {
+  const rect = el.getBoundingClientRect();
+  const besideX = rect.right - 32;
+  const besideY = rect.top - 8;
+  channelMenuPos.value = {
+    x: Math.max(8, Math.round(besideX)),
+    y: Math.round(besideY)
+  };
+  channelMenuOpen.value = true;
+}
+
+function toggleChannelMenuFromButton(event) {
+  if (channelMenuOpen.value) {
+    closeChannelMenu();
+    return;
+  }
+  openChannelMenuAt(event.currentTarget);
+}
+
+function openChannelMenuAtPointer(event) {
+  sessionListTab.value = "channel";
+  openChannelMenuAt(event.currentTarget);
+}
+
+function onPickChannelType(type) {
+  closeChannelMenu();
+  emit("pick-channel-type", type);
+}
+
+function onWindowKeydown(event) {
+  if (event.key === "Escape") {
+    closeChannelMenu();
+  }
+}
+
+onMounted(() => {
+  window.addEventListener("keydown", onWindowKeydown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("keydown", onWindowKeydown);
+});
+
+watch(sessionListTab, () => {
+  closeChannelMenu();
+});
 
 watch(
   () => [props.activeSessionId, props.welcomeActive, props.channelSessions],
@@ -134,14 +215,6 @@ watch(
   },
   { immediate: true }
 );
-
-defineEmits([
-  "open-settings",
-  "add-channel",
-  "select-session",
-  "delete-session",
-  "new-session"
-]);
 </script>
 
 <style scoped>

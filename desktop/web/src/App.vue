@@ -6,7 +6,7 @@
       :active-session-id="activeSessionId"
       :welcome-active="isWelcome()"
       @open-settings="openSettings"
-      @add-channel="openAddChannelPicker"
+      @pick-channel-type="startChannelCreate"
       @select-session="onSelectSession"
       @delete-session="onDeleteSession"
       @new-session="onNewSession"
@@ -71,7 +71,6 @@
     />
 
     <ChannelConfigModals
-      :picker-open="channelPickerOpen"
       :editing="channelEditing"
       :delete-target="channelDeleteTarget"
       :deleting="channelDeleting"
@@ -82,8 +81,6 @@
       :get-settings-catalog="getSettingsCatalog"
       :get-session-agent="getSessionAgent"
       :set-session-agent="setSessionAgent"
-      @close-picker="closeChannelPicker"
-      @pick-type="startChannelCreate"
       @close-edit="closeChannelEdit"
       @saved="onChannelConfigSaved"
       @cancel-delete="cancelChannelDelete"
@@ -149,7 +146,6 @@ const {
   isChannelSession,
   activeChannelPlatform,
   activeChannelSessionIdForSettings,
-  channelPickerOpen,
   channelEditing,
   channelDeleteTarget,
   channelDeleting,
@@ -176,8 +172,6 @@ const {
   installSkill,
   refreshSkillsList,
   uninstallSkill,
-  openAddChannelPicker,
-  closeChannelPicker,
   startChannelCreate,
   closeChannelEdit,
   onChannelConfigSaved,

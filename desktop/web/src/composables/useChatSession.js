@@ -14,7 +14,6 @@ export function useChatSession() {
   const sessionWorkspaceDir = ref(null);
   const sessions = ref([]);
   const channelInstances = ref([]);
-  const channelPickerOpen = ref(false);
   const channelEditing = ref(null);
   const channelDeleteTarget = ref(null);
   const channelDeleting = ref(false);
@@ -765,14 +764,6 @@ export function useChatSession() {
     await refreshAgentSelectionState(activeSessionId.value);
   }
 
-  function openAddChannelPicker() {
-    channelPickerOpen.value = true;
-  }
-
-  function closeChannelPicker() {
-    channelPickerOpen.value = false;
-  }
-
   function startChannelEdit(inst) {
     channelEditing.value = {
       type: inst.type,
@@ -783,7 +774,6 @@ export function useChatSession() {
   }
 
   function startChannelCreate(type) {
-    channelPickerOpen.value = false;
     channelEditing.value = { type, channelId: "", sessionId: "", isNew: true };
   }
 
@@ -890,7 +880,6 @@ export function useChatSession() {
     isChannelSession,
     activeChannelPlatform,
     activeChannelSessionIdForSettings,
-    channelPickerOpen,
     channelEditing,
     channelDeleteTarget,
     channelDeleting,
@@ -901,8 +890,6 @@ export function useChatSession() {
     isWelcome,
     init,
     openWelcome,
-    openAddChannelPicker,
-    closeChannelPicker,
     startChannelCreate,
     closeChannelEdit,
     onChannelConfigSaved,
