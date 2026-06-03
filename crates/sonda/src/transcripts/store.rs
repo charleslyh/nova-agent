@@ -144,8 +144,15 @@ impl TranscriptRuntime {
     }
 
     fn publish_delta(&self, delta: SondaSessionEventRecord) {
+        let is_reset = matches!(delta.event.kind, SessionEventKind::Reset);
         let mut state = self.state.lock().expect("transcript runtime state poisoned");
-        state.subscribers.retain(|sub| {
+        state.subscribers.retain_mut(|sub| {
+            if is_reset {
+                // Reset rewrites the transcript starting at seq 1; rewind the
+                // subscriber cursor so post-reset events are not dropped.
+                sub.start_seq = delta.seq;
+                return sub.tx.send(delta.clone()).is_ok();
+            }
             if delta.seq < sub.start_seq {
                 return true;
             }
@@ -398,6 +405,42 @@ mod tests {
         runtime.append(&wrap_user("c")).expect("append c");
         let live = rx.try_recv().expect("live seq 3");
         assert_eq!(live.seq, 3);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reset_notifies_live_subscribers_and_resumes_seq() {
+        let dir = std::env::temp_dir().join(format!(
+            "moray-reset-live-sub-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("transcript.jsonl");
+        jsonl::create_transcript_file(&path).expect("init transcript");
+        let runtime = TranscriptRuntime::new(path);
+
+        runtime.append(&wrap_user("before")).expect("append before");
+        let mut rx = runtime.subscribe_live();
+
+        runtime
+            .append(&SessionEvent {
+                session_id: "test-session".into(),
+                ts: 2,
+                kind: SessionEventKind::Reset,
+            })
+            .expect("reset");
+
+        let reset_ev = rx.try_recv().expect("reset delivered to live subscriber");
+        assert!(matches!(reset_ev.event.kind, SessionEventKind::Reset));
+        assert_eq!(reset_ev.seq, 1);
+
+        runtime.append(&wrap_user("after")).expect("append after reset");
+        let after = rx.try_recv().expect("post-reset event delivered");
+        assert_eq!(after.seq, 2);
 
         let _ = std::fs::remove_dir_all(dir);
     }
