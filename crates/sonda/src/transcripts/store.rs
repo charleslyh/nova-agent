@@ -352,15 +352,8 @@ mod tests {
 
     #[test]
     fn subscribe_replays_persisted_then_live_without_duplicates() {
-        let dir = std::env::temp_dir().join(format!(
-            "moray-subscribe-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("transcript.jsonl");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("transcript.jsonl");
         jsonl::create_transcript_file(&path).expect("init transcript");
         let runtime = TranscriptRuntime::new(path);
 
@@ -378,21 +371,12 @@ mod tests {
         runtime.append(&wrap_user("c")).expect("append c");
         let third = rx.try_recv().expect("live seq 3");
         assert_eq!(third.seq, 3);
-
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn subscribe_live_skips_persisted_replay() {
-        let dir = std::env::temp_dir().join(format!(
-            "moray-subscribe-live-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("transcript.jsonl");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("transcript.jsonl");
         jsonl::create_transcript_file(&path).expect("init transcript");
         let runtime = TranscriptRuntime::new(path);
 
@@ -405,21 +389,12 @@ mod tests {
         runtime.append(&wrap_user("c")).expect("append c");
         let live = rx.try_recv().expect("live seq 3");
         assert_eq!(live.seq, 3);
-
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn reset_notifies_live_subscribers_and_resumes_seq() {
-        let dir = std::env::temp_dir().join(format!(
-            "moray-reset-live-sub-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("transcript.jsonl");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("transcript.jsonl");
         jsonl::create_transcript_file(&path).expect("init transcript");
         let runtime = TranscriptRuntime::new(path);
 
@@ -441,21 +416,12 @@ mod tests {
         runtime.append(&wrap_user("after")).expect("append after reset");
         let after = rx.try_recv().expect("post-reset event delivered");
         assert_eq!(after.seq, 2);
-
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
     fn reset_replaces_persisted_history() {
-        let dir = std::env::temp_dir().join(format!(
-            "moray-reset-transcript-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("transcript.jsonl");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("transcript.jsonl");
         jsonl::create_transcript_file(&path).expect("init transcript");
         let runtime = TranscriptRuntime::new(path.clone());
 
@@ -472,7 +438,5 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert!(matches!(records[0].event.kind, SessionEventKind::Reset));
         assert_eq!(records[0].seq, 1);
-
-        let _ = std::fs::remove_dir_all(dir);
     }
 }
