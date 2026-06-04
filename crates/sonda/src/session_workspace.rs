@@ -66,15 +66,8 @@ impl SondaSessionWorkspace {
     pub fn list_session_tree(&self, session_id: &str) -> Result<SessionWorkspaceTree> {
         let root = self.session_dir(session_id);
         let path_str = root.to_string_lossy().to_string();
-
-        if let Err(source) = fs::read_dir(&root) {
-            return Err(
-                FileIoError::new("read session workspace", root.clone(), source).into(),
-            );
-        }
-
         let mut remaining_nodes = TREE_MAX_NODES;
-        let entries = list_entries_recursive(&root, 0, &mut remaining_nodes);
+        let entries = list_entries_recursive(&root, 0, &mut remaining_nodes)?;
 
         Ok(SessionWorkspaceTree {
             path: path_str,
@@ -91,13 +84,26 @@ fn list_entries_recursive(
     dir: &Path,
     depth: usize,
     remaining_nodes: &mut usize,
-) -> Vec<SessionWorkspaceEntry> {
+) -> Result<Vec<SessionWorkspaceEntry>> {
     if depth > TREE_MAX_DEPTH || *remaining_nodes == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    let Ok(read_dir) = fs::read_dir(dir) else {
-        return Vec::new();
+    let read_dir = match fs::read_dir(dir) {
+        Ok(read_dir) => read_dir,
+        Err(source) => {
+            if depth == 0 {
+                return Err(
+                    FileIoError::new("read session workspace", dir.to_path_buf(), source).into(),
+                );
+            }
+            tracing::warn!(
+                path = %dir.display(),
+                error = %source,
+                "session workspace: skip unreadable directory"
+            );
+            return Ok(Vec::new());
+        }
     };
 
     let mut entries = Vec::new();
@@ -123,7 +129,7 @@ fn list_entries_recursive(
         *remaining_nodes -= 1;
 
         let children = if is_dir && !is_symlink {
-            list_entries_recursive(&path_buf, depth + 1, remaining_nodes)
+            list_entries_recursive(&path_buf, depth + 1, remaining_nodes)?
         } else {
             Vec::new()
         };
@@ -141,7 +147,7 @@ fn list_entries_recursive(
         (false, true) => std::cmp::Ordering::Greater,
         _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
-    entries
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -157,6 +163,13 @@ mod tests {
         let path = workspace.session_workspace_path("abc-123");
         assert!(path.path.ends_with("abc-123"));
         assert!(path.path.starts_with(dir.path().to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn list_session_tree_errors_when_root_missing() {
+        let dir = tempdir().unwrap();
+        let workspace = SondaSessionWorkspace::new(dir.path());
+        assert!(workspace.list_session_tree("no-such-session").is_err());
     }
 
     #[test]

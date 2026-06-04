@@ -209,6 +209,10 @@ impl ContextEngine for CompositeContextEngine {
     }
 }
 
+#[cfg(debug_assertions)]
+const TRANSCRIPT_NO_SYSTEM_MSG: &str =
+    "transcript must not contain System messages; turn preamble is prepended at assemble";
+
 /// Transcript must be user / assistant / tool only; turn preamble is prepended at assemble.
 #[cfg(debug_assertions)]
 fn ensure_transcript_messages(messages: &[ChatCompletionRequestMessage]) -> Result<(), MorayError> {
@@ -216,10 +220,7 @@ fn ensure_transcript_messages(messages: &[ChatCompletionRequestMessage]) -> Resu
         .iter()
         .any(|m| matches!(m, ChatCompletionRequestMessage::System { .. }))
     {
-        return Err(MorayError::Message(
-            "transcript must not contain System messages; turn preamble is prepended at assemble"
-                .into(),
-        ));
+        return Err(MorayError::Message(TRANSCRIPT_NO_SYSTEM_MSG.into()));
     }
     Ok(())
 }
@@ -270,7 +271,9 @@ mod tests {
 
     #[test]
     #[cfg(debug_assertions)]
-    #[should_panic(expected = "transcript must not contain System messages")]
+    #[should_panic(
+        expected = "transcript must not contain System messages; turn preamble is prepended at assemble"
+    )]
     fn messages_builder_rejects_system_in_transcript() {
         CompositeContextEngineBuilder::new()
             .messages(vec![
@@ -294,10 +297,10 @@ mod tests {
             }])
             .await
             .expect_err("ingest");
-        assert!(
-            err.to_string()
-                .contains("transcript must not contain System messages")
-        );
+        assert!(matches!(
+            err,
+            MorayError::Message(ref m) if m == TRANSCRIPT_NO_SYSTEM_MSG
+        ));
     }
 
     struct LifecycleNode {

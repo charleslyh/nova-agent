@@ -119,26 +119,40 @@ function clearWorkspaceState() {
   workspacePath.value = "";
   expandedDirPaths.value = new Set();
   error.value = null;
+  loading.value = false;
 }
+
+let workspaceLoadSeq = 0;
 
 async function loadWorkspace() {
   if (!props.sessionId) {
+    workspaceLoadSeq += 1;
     clearWorkspaceState();
     return;
   }
 
+  const sessionId = props.sessionId;
+  const seq = ++workspaceLoadSeq;
   loading.value = true;
   error.value = null;
   try {
-    const result = await props.fetchWorkspace(props.sessionId);
+    const result = await props.fetchWorkspace(sessionId);
+    if (seq !== workspaceLoadSeq || props.sessionId !== sessionId) {
+      return;
+    }
     workspacePath.value = typeof result?.path === "string" ? result.path : "";
     entries.value = Array.isArray(result?.entries) ? result.entries : [];
     expandedDirPaths.value = new Set();
   } catch (e) {
+    if (seq !== workspaceLoadSeq || props.sessionId !== sessionId) {
+      return;
+    }
     clearWorkspaceState();
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    loading.value = false;
+    if (seq === workspaceLoadSeq) {
+      loading.value = false;
+    }
   }
 }
 
@@ -162,7 +176,8 @@ watch(
   ([isOpen, sessionId]) => {
     if (isOpen && sessionId) {
       loadWorkspace();
-    } else if (!isOpen) {
+    } else {
+      workspaceLoadSeq += 1;
       clearWorkspaceState();
     }
   },
