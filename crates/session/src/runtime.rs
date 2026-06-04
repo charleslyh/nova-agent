@@ -124,7 +124,7 @@ pub struct SessionRuntime {
     session_id: String,
     stream: bool,
     event_sink: Arc<dyn SessionEventSink>,
-    context_engine: Arc<dyn ContextEngine>,
+    context: Arc<dyn ContextEngine>,
     harness: Arc<dyn Harness>,
     active: Arc<AtomicBool>,
     active_turn: ActiveTurn,
@@ -165,7 +165,7 @@ impl SessionRuntime {
     pub fn new(
         session_id: impl Into<String>,
         event_sink: Arc<dyn SessionEventSink>,
-        context_engine: Arc<dyn ContextEngine>,
+        context: Arc<dyn ContextEngine>,
         harness: Arc<dyn Harness>,
         stream: bool,
     ) -> Self {
@@ -174,7 +174,7 @@ impl SessionRuntime {
             harness,
             stream,
             event_sink,
-            context_engine,
+            context,
             active: Arc::new(AtomicBool::new(false)),
             active_turn: ActiveTurn::new(),
         }
@@ -188,7 +188,7 @@ impl SessionRuntime {
         let event = event_of(self.session_id.as_str(), SessionEventKind::TurnAccepted { input });
         self.event_sink.append(&event)?;
 
-        self.context_engine
+        self.context
             .ingest(vec![ChatCompletionRequestMessage::User { content }])
             .await?;
 
@@ -197,7 +197,7 @@ impl SessionRuntime {
         let agent_stream = AgentRequestBuilder::new()
             .completion(completion)
             .toolbox(toolbox)
-            .context(self.context_engine.clone())
+            .context(self.context.clone())
             .stream(self.stream)
             .cancellation(cancellation)
             .run()?;
@@ -228,9 +228,12 @@ impl SessionRuntime {
 
         let _guard = self.request_active_guard()?;
 
-        self.event_sink
-            .append(&event_of(self.session_id.as_str(), SessionEventKind::Reset))?;
-        self.context_engine.clear().await?;
+        self.event_sink.append(&event_of(
+            self.session_id.as_str(),
+            SessionEventKind::Reset
+        ))?;
+
+        self.context.clear().await?;
 
         Ok(())
     }

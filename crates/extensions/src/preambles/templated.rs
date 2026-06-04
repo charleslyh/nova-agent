@@ -1,11 +1,11 @@
-//! Template-based system prompt pipeline node.
+//! Template-based system prompt provider.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
 use moray_core::{ChatCompletionRequestMessage, MorayError, ToolManifest};
 
-use crate::context::ContextPipelineNode;
+use crate::context::PreambleProvider;
 use crate::preambles::PreambleSection;
 
 /// Resolves one template placeholder at render time (`{{key}}`).
@@ -38,14 +38,12 @@ impl PreambleKeyPred for PreambleSubstitutionFn {
     }
 }
 
-/// Hard-coded system prompt template + [`ContextPipelineNode`] implementation.
+/// Hard-coded system prompt template + [`PreambleProvider`] implementation.
 pub struct TemplatedPreambler {
     template: String,
     sub_values: BTreeMap<String, String>,
     sub_preds: BTreeMap<String, Arc<dyn PreambleKeyPred>>,
     sections: Vec<Arc<dyn PreambleSection>>,
-    /// Preamble frozen for the current agent run; set in [`ContextPipelineNode::bootstrap`].
-    turn_preamble: RwLock<Option<String>>,
 }
 
 impl std::fmt::Debug for TemplatedPreambler {
@@ -111,30 +109,13 @@ impl TemplatedPreamblerBuilder {
             sub_values: self.values,
             sub_preds: self.preds,
             sections: self.sections,
-            turn_preamble: RwLock::new(None),
         }
     }
 }
 
-fn preamble_lock_err() -> MorayError {
-    MorayError::Message("TemplatedPreambler turn_preamble lock poisoned".into())
-}
-
 impl TemplatedPreambler {
-    fn turn_preamble(&self) -> Result<String, MorayError> {
-        self.turn_preamble
-            .read()
-            .map_err(|_| preamble_lock_err())?
-            .clone()
-            .ok_or_else(|| {
-                MorayError::Message(
-                    "TemplatedPreambler: bootstrap required before process".into(),
-                )
-            })
-    }
-
-    /// Resolve template, dynamic preds, and sections once per agent run.
-    fn render_once(&self) -> String {
+    /// Resolve template, dynamic preds, and sections (used by [`PreambleProvider::generate`]).
+    pub fn render(&self) -> String {
         let mut preamble = self.template.clone();
 
         for (key, value) in &self.sub_values {
@@ -182,40 +163,13 @@ impl TemplatedPreambler {
     }
 }
 
-impl ContextPipelineNode for TemplatedPreambler {
-    fn bootstrap(&self) -> Result<(), MorayError> {
-        *self
-            .turn_preamble
-            .write()
-            .map_err(|_| preamble_lock_err())? = Some(self.render_once());
-        Ok(())
-    }
-
-    fn process(
+impl PreambleProvider for TemplatedPreambler {
+    fn generate(
         &self,
-        messages: Vec<ChatCompletionRequestMessage>,
+        _transcript: &[ChatCompletionRequestMessage],
         _tools: &[ToolManifest],
-    ) -> Result<Vec<ChatCompletionRequestMessage>, MorayError> {
-        let sysmsg = ChatCompletionRequestMessage::System {
-            content: self.turn_preamble()?,
-        };
-
-        let mut messages = messages;
-        if matches!(messages.first(), Some(ChatCompletionRequestMessage::System { .. })) {
-            messages[0] = sysmsg;
-        } else {
-            messages.insert(0, sysmsg);
-        }
-
-        Ok(messages)
-    }
-
-    fn teardown(&self) -> Result<(), MorayError> {
-        *self
-            .turn_preamble
-            .write()
-            .map_err(|_| preamble_lock_err())? = None;
-        Ok(())
+    ) -> Result<String, MorayError> {
+        Ok(self.render())
     }
 }
 
@@ -223,12 +177,14 @@ impl ContextPipelineNode for TemplatedPreambler {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use crate::context::PreambleProvider;
+
     use super::*;
 
     const TEST_TEMPLATE: &str = "## Character\n\n{{character}}\n";
 
-    fn rendered(node: &TemplatedPreambler) -> String {
-        node.render_once()
+    fn rendered(provider: &TemplatedPreambler) -> String {
+        provider.generate(&[], &[]).expect("generate")
     }
 
     struct CountingPred {
@@ -270,10 +226,58 @@ mod tests {
         let text = rendered(
             &TemplatedPreamblerBuilder::new()
                 .template(TEST_TEMPLATE)
-                .with_string("character", "A meticulous reviewer.")
+                .with_string("character", "Mika.")
                 .build(),
         );
-        assert!(text.contains("A meticulous reviewer."));
+        assert!(text.contains("Mika."));
+        assert!(!text.contains("{{character}}"));
+    }
+
+    #[test]
+    fn render_pred_invoked_each_generate() {
+        let pred = Arc::new(CountingPred {
+            calls: AtomicUsize::new(0),
+            value: "dynamic".into(),
+        });
+        let provider = TemplatedPreamblerBuilder::new()
+            .template(TEST_TEMPLATE)
+            .with_pred("character", pred.clone())
+            .build();
+        rendered(&provider);
+        rendered(&provider);
+        assert_eq!(pred.calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn with_fn_invoked_each_generate() {
+        let pred = Arc::new(CountingPred {
+            calls: AtomicUsize::new(0),
+            value: "fn-value".into(),
+        });
+        let pred_in_fn = pred.clone();
+        let provider = TemplatedPreamblerBuilder::new()
+            .template(TEST_TEMPLATE)
+            .with_fn("character", move || {
+                pred_in_fn.resolve();
+                "from-fn".into()
+            })
+            .build();
+        rendered(&provider);
+        rendered(&provider);
+        assert_eq!(pred.calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn with_fn_mut_can_change_value() {
+        let state = Arc::new(Mutex::new(1_u32));
+        let state_in_fn = state.clone();
+        let provider = TemplatedPreamblerBuilder::new()
+            .template("n={{character}}")
+            .with_fn("character", move || state_in_fn.lock().unwrap().to_string())
+            .build();
+        assert!(rendered(&provider).contains("n=1"));
+        *state.lock().unwrap() = 2;
+        assert!(rendered(&provider).contains("n=2"));
     }
 
     #[test]
@@ -283,73 +287,21 @@ mod tests {
         struct StaticSection(&'static str);
         impl PreambleSection for StaticSection {
             fn render(&self) -> String {
-                self.0.to_string()
+                self.0.into()
             }
         }
 
         let text = rendered(
             &TemplatedPreamblerBuilder::new()
                 .template("## Character\n\n{{character}}\n")
-                .with_string("character", "Hi")
-                .section(StaticSection("## Skills\n\n<available_skills/>"))
+                .with_string("character", "Mika.")
+                .section(StaticSection("## Extra\n\nMore text."))
                 .build(),
         );
-        assert!(text.contains("Hi"));
-        assert!(text.contains("<available_skills/>"));
-        assert!(text.find("Hi").unwrap() < text.find("<available_skills").unwrap());
-    }
-
-    #[test]
-    fn render_pred_invoked_each_render() {
-        let pred = Arc::new(CountingPred {
-            calls: AtomicUsize::new(0),
-            value: "From pred.".into(),
-        });
-        let node = TemplatedPreamblerBuilder::new()
-            .template(TEST_TEMPLATE)
-            .with_pred("character", pred.clone())
-            .build();
-        let a = rendered(&node);
-        let b = rendered(&node);
-        assert!(a.contains("From pred."));
-        assert_eq!(pred.calls.load(Ordering::SeqCst), 2);
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn with_fn_invoked_each_render() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let calls_in_fn = calls.clone();
-        let node = TemplatedPreamblerBuilder::new()
-            .template(TEST_TEMPLATE)
-            .with_fn(
-                "character",
-                move || {
-                    calls_in_fn.fetch_add(1, Ordering::SeqCst);
-                    "From fn.".into()
-                },
-            )
-            .build();
-        rendered(&node);
-        rendered(&node);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
-    }
-
-    #[test]
-    fn with_fn_mut_can_change_value() {
-        let counter = AtomicUsize::new(0);
-        let node = TemplatedPreamblerBuilder::new()
-            .template(TEST_TEMPLATE)
-            .with_fn(
-                "character",
-                move || {
-                    let n = counter.fetch_add(1, Ordering::SeqCst);
-                    format!("value-{n}")
-                },
-            )
-            .build();
-        assert!(rendered(&node).contains("value-0"));
-        assert!(rendered(&node).contains("value-1"));
+        assert!(text.contains("## Character"));
+        assert!(text.contains("Mika."));
+        assert!(text.contains("## Extra"));
+        assert!(text.contains("More text."));
     }
 
     #[test]
@@ -371,77 +323,45 @@ mod tests {
     }
 
     #[test]
-    fn process_prepends_system() {
-        let node = TemplatedPreamblerBuilder::new()
+    fn generate_substitutes_static_character() {
+        let provider = TemplatedPreamblerBuilder::new()
             .template(TEST_TEMPLATE)
             .with_string("character", "test")
             .build();
-        node.bootstrap().expect("bootstrap");
-        let out = node
-            .process(
-                vec![ChatCompletionRequestMessage::User {
-                    content: "hi".into(),
-                }],
-                &[],
-            )
-            .expect("process");
-        assert!(matches!(
-            out.first(),
-            Some(ChatCompletionRequestMessage::System { .. })
-        ));
-        assert_eq!(out.len(), 2);
+        let content = provider.generate(&[], &[]).expect("generate");
+        assert!(content.contains("## Character"));
+        assert!(content.contains("test"));
     }
 
     #[test]
-    fn bootstrap_freezes_dynamic_preds_for_process() {
+    fn generate_invokes_dynamic_preds_once_per_call() {
         let pred = Arc::new(CountingPred {
             calls: AtomicUsize::new(0),
             value: "Frozen.".into(),
         });
-        let node = TemplatedPreamblerBuilder::new()
+        let provider = TemplatedPreamblerBuilder::new()
             .template(TEST_TEMPLATE)
             .with_pred("character", pred.clone())
             .build();
-        node.bootstrap().expect("bootstrap");
-        assert_eq!(pred.calls.load(Ordering::SeqCst), 1);
-
-        let _ = node.process(vec![], &[]).expect("process 1");
-        let _ = node.process(vec![], &[]).expect("process 2");
-        assert_eq!(pred.calls.load(Ordering::SeqCst), 1);
-
-        node.teardown().expect("teardown");
-        rendered(&node);
+        provider.generate(&[], &[]).expect("generate 1");
+        provider.generate(&[], &[]).expect("generate 2");
         assert_eq!(pred.calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
-    fn process_without_bootstrap_errors() {
-        let node = TemplatedPreamblerBuilder::new()
-            .template(TEST_TEMPLATE)
-            .with_string("character", "test")
-            .build();
-        let err = node.process(vec![], &[]).expect_err("process");
-        assert!(
-            err.to_string()
-                .contains("bootstrap required before process")
-        );
-    }
+    fn generate_reads_pred_state_at_call_time() {
+        use std::sync::RwLock;
 
-    #[test]
-    fn bootstrap_snapshot_ignores_later_pred_changes_until_next_bootstrap() {
         let current = Arc::new(RwLock::new("v1".to_string()));
         let current_in_fn = current.clone();
-        let node = TemplatedPreamblerBuilder::new()
+        let provider = TemplatedPreamblerBuilder::new()
             .template(TEST_TEMPLATE)
             .with_fn("character", move || current_in_fn.read().expect("lock").clone())
             .build();
-        node.bootstrap().expect("bootstrap");
+        let first = provider.generate(&[], &[]).expect("generate 1");
         *current.write().expect("lock") = "v2".into();
-        let out = node.process(vec![], &[]).expect("process");
-        let ChatCompletionRequestMessage::System { content } = &out[0] else {
-            panic!("expected system message");
-        };
-        assert!(content.contains("v1"));
-        assert!(!content.contains("v2"));
+        let second = provider.generate(&[], &[]).expect("generate 2");
+        assert!(first.contains("v1"));
+        assert!(second.contains("v2"));
     }
 }

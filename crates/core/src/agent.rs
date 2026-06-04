@@ -17,7 +17,7 @@ use crate::completion::{
 };
 use crate::context::ContextEngine;
 use crate::toolbox::{ToolCallEvent, ToolCallEventSink, ToolCallGroupId, Toolbox};
-use crate::types::MorayError;
+use crate::types::{MorayError, ToolManifest};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -49,8 +49,8 @@ pub enum AgentResponseEvent {
 
 pub fn agent_run(
     context: Arc<dyn ContextEngine>,
-    toolbox: Arc<Toolbox>,
     completion: Arc<dyn ChatCompletion>,
+    toolbox: Arc<Toolbox>,
     stream: bool,
     cancellation: CancellationToken,
 ) -> Result<Pin<Box<dyn Stream<Item = AgentResponseEvent> + Send>>, MorayError> {
@@ -61,8 +61,8 @@ pub fn agent_run(
     tokio::spawn(
         agent_run_impl(
             context,
-            toolbox,
             completion,
+            toolbox,
             stream,
             cancellation,
             tx,
@@ -75,14 +75,15 @@ pub fn agent_run(
 
 async fn agent_run_impl(
     context: Arc<dyn ContextEngine>,
-    toolbox: Arc<Toolbox>,
     completion: Arc<dyn ChatCompletion>,
+    toolbox: Arc<Toolbox>,
     stream: bool,
     cancellation: CancellationToken,
     tx: UnboundedSender<AgentResponseEvent>,
 ) {
-    if let Err(e) = context.bootstrap().await {
-        warn!(error = %e, "context bootstrap failed");
+    let tools = toolbox.list_tools().await;
+    if let Err(e) = context.setup(&tools).await {
+        warn!(error = %e, "context setup failed");
         emit_event(
             &tx,
             AgentResponseEvent::Finished {
@@ -93,16 +94,17 @@ async fn agent_run_impl(
         );
         return;
     }
-    debug!("bootstrap completed");
+    debug!("setup completed");
 
     let exit_kind = loop {
         match react_once(
-            &completion,
-            &toolbox,
             &context,
+            &tools,
+            &completion,
             stream,
-            &tx,
+            &toolbox,
             &cancellation,
+            &tx,
         )
         .await
         {
@@ -202,8 +204,8 @@ impl AgentRequestBuilder {
 
         agent_run(
             context,
-            toolbox,
             completion,
+            toolbox,
             self.stream,
             cancellation,
         )
@@ -242,14 +244,14 @@ fn toolbox_err(kind: impl std::fmt::Display) -> AgentFinishKind {
 }
 
 async fn react_once(
-    completion: &Arc<dyn ChatCompletion>,
-    toolbox: &Arc<Toolbox>,
     context: &Arc<dyn ContextEngine>,
+    tools: &[ToolManifest],
+    completion: &Arc<dyn ChatCompletion>,
     stream: bool,
-    tx: &UnboundedSender<AgentResponseEvent>,
+    toolbox: &Arc<Toolbox>,
     cancellation: &CancellationToken,
+    tx: &UnboundedSender<AgentResponseEvent>,
 ) -> Result<usize, AgentFinishKind> {
-    let tools = toolbox.list_tools().await;
     debug!(stream, tool_count = tools.len(), "started");
     let messages = match context.assemble(&tools).await {
         Ok(v) => v,

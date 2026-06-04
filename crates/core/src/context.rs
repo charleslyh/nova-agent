@@ -5,7 +5,7 @@ use crate::types::{MorayError, ToolManifest};
 
 #[async_trait]
 pub trait ContextEngine: Send + Sync {
-    async fn bootstrap(&self) -> Result<(), MorayError>;
+    async fn setup(&self, tools: &[ToolManifest]) -> Result<(), MorayError>;
 
     async fn assemble(
         &self,

@@ -53,15 +53,21 @@ impl SondaSessionFactory {
         let session_id = session_id.to_string();
         let settings = self.settings_store.clone();
         let session_catalog = self.session_catalog.clone();
-        let skills = self.skill_center.skills(SkillFilterKind::All);
         let preamble_template = settings.preamble_template();
+
+        // TODO: filter skills per session / turn instead of loading the full catalog.
+        let skills = self.skill_center.skills(SkillFilterKind::All);
+
         let preambler = TemplatedPreamblerBuilder::default()
             .template(preamble_template)
             .with_fn("character", move || {
+                // Re-read the session's agent on every run: the user may change it in Settings
+                // mid-session; the value is frozen for that run when the context engine runs setup.
                 let agent_id = match session_catalog.get_session_agent_id(session_id.as_str()) {
                     Ok(id) => id,
                     Err(_) => return String::new(),
                 };
+
                 settings
                     .agent_character(&agent_id)
                     .ok()
@@ -74,7 +80,7 @@ impl SondaSessionFactory {
         Ok(Arc::new(
             CompositeContextEngineBuilder::new()
                 .messages(messages)
-                .node(Arc::new(preambler))
+                .preamble(Arc::new(preambler))
                 .build(),
         ))
     }
