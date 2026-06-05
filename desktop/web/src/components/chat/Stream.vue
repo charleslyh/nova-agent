@@ -9,8 +9,26 @@
       <div v-for="(turn, turnIndex) in turnGroups" :key="turn.id" class="turn">
         <div class="turn-content">
           <div v-if="turn.user" class="msg-row msg-row--user">
-            <div class="bubble bubble--user">
-              {{ turn.user.text }}
+            <div class="user-message">
+              <div
+                v-if="hasUserText(turn.user)"
+                class="bubble bubble--user"
+              >
+                {{ turn.user.text }}
+              </div>
+              <div
+                v-if="userImageResources(turn.user).length"
+                class="user-images"
+              >
+                <img
+                  v-for="(img, imgIndex) in userImageResources(turn.user)"
+                  :key="`${turn.user.id}-img-${imgIndex}`"
+                  class="user-images__img"
+                  :src="img.src"
+                  alt=""
+                  loading="lazy"
+                />
+              </div>
             </div>
           </div>
 
@@ -69,6 +87,7 @@
 <script setup>
 import { computed, nextTick, ref, watch } from "vue";
 import { renderAssistantMarkdown } from "@/lib/markdown.js";
+import { resolveUserImageSrc } from "@/lib/userImages.js";
 import ToolCallCard from "@/components/chat/ToolCallCard.vue";
 import ThinkCard from "@/components/chat/ThinkCard.vue";
 
@@ -109,6 +128,23 @@ const manualPinnedThinkId = ref(null);
 const lastActiveStreamingThinkId = ref(null);
 function hasVisibleAssistantText(text) {
   return typeof text === "string" && text.trim().length > 0;
+}
+
+function hasUserText(user) {
+  return user && hasVisibleAssistantText(user.text);
+}
+
+function userImageResources(user) {
+  if (!user || !Array.isArray(user.resources)) return [];
+  const sessionDir =
+    typeof props.sessionDir === "string" ? props.sessionDir.trim() : "";
+  return user.resources
+    .filter((r) => r?.kind === "image" && typeof r.path === "string")
+    .map((r) => {
+      const src = resolveUserImageSrc(r.path, sessionDir);
+      return src ? { path: r.path, src } : null;
+    })
+    .filter(Boolean);
 }
 
 function shouldShowStreamItem(item) {
@@ -332,6 +368,7 @@ watch(
 
 .msg-row {
   display: flex;
+  width: 100%;
   margin-bottom: 12px;
 }
 
@@ -353,16 +390,51 @@ watch(
 }
 
 .bubble {
-  max-width: 62%;
   font-size: 15px;
   line-height: 1.5;
   padding: 10px 14px;
   border-radius: 14px;
+  box-sizing: border-box;
+}
+
+.user-message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  width: min(72%, 760px);
+  max-width: 100%;
+  min-width: 0;
+  margin-left: auto;
 }
 
 .bubble--user {
+  width: fit-content;
+  max-width: 100%;
   background: #ececed;
   color: #2d2d2d;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.user-images {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.user-images__img {
+  display: block;
+  max-width: 256px;
+  max-height: 256px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 12px;
+  border: 1px solid #e0e0e4;
 }
 
 .text {

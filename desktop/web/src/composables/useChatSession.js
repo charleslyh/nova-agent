@@ -1,5 +1,7 @@
 import { computed, ref } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import { createHttpChatClient } from "@/chat-client";
+import { previewSrcForPickerPath } from "@/lib/userImages.js";
 import {
   channelTypeBySessionIdFromInstances,
   mapChannelInstance,
@@ -8,6 +10,7 @@ import {
 export function useChatSession() {
   const transcript = ref([]);
   const draft = ref("");
+  const composerAttachments = ref([]);
   const status = ref("idle");
   const activeSessionId = ref(null);
   const sessionWorkspaceDir = ref(null);
@@ -37,7 +40,45 @@ export function useChatSession() {
   const isWelcome = () => activeSessionId.value == null;
 
   function sessionNameFromInput(input) {
-    return [...input.trim()].slice(0, 16).join("");
+    const trimmed = input.trim();
+    if (!trimmed) return "图片会话";
+    return [...trimmed].slice(0, 16).join("");
+  }
+
+  function sessionNameFromAttachment(sourcePath) {
+    const base =
+      typeof sourcePath === "string"
+        ? sourcePath.split(/[/\\]/).pop() || ""
+        : "";
+    const stem = base.replace(/\.[^.]+$/, "").trim();
+    return sessionNameFromInput(stem || "图片会话");
+  }
+
+  function normalizeTurnResources(resources) {
+    if (!Array.isArray(resources)) return [];
+    return resources
+      .map((r) => {
+        if (r?.kind === "image" && typeof r.path === "string") {
+          return { kind: "image", path: r.path };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+
+  function addComposerAttachments(paths) {
+    for (const sourcePath of paths) {
+      if (typeof sourcePath !== "string" || !sourcePath) continue;
+      composerAttachments.value.push({
+        id: `${Date.now()}-${Math.random()}`,
+        sourcePath,
+        previewUrl: previewSrcForPickerPath(sourcePath)
+      });
+    }
+  }
+
+  function removeComposerAttachment(id) {
+    composerAttachments.value = composerAttachments.value.filter((a) => a.id !== id);
   }
 
   function push(role, text, extra = {}) {
@@ -278,6 +319,7 @@ export function useChatSession() {
   function clearConversationState() {
     transcript.value = [];
     draft.value = "";
+    composerAttachments.value = [];
     status.value = "idle";
     finishAssistantChunkStream();
     finishThinkChunkStream();
@@ -342,7 +384,9 @@ export function useChatSession() {
       finishThinkChunkStream();
       clearToolCardState();
       clearThinkCardState();
-      push("user", event.kind.input?.content ?? "");
+      push("user", event.kind.input?.text ?? event.kind.input?.content ?? "", {
+        resources: normalizeTurnResources(event.kind.input?.resources)
+      });
     } else if (kind === "reset") {
       clearConversationState();
     } else if (kind === "turn_finish") {
@@ -659,16 +703,24 @@ export function useChatSession() {
 
   async function submitDraft() {
     if (isChannelSession.value) return;
-    if (status.value === "running" || !draft.value.trim()) return;
+    if (status.value === "running") return;
     const text = draft.value.trim();
+    const pending = [...composerAttachments.value];
+    if (!text && pending.length === 0) return;
 
     try {
       let sessionId = activeSessionId.value;
       if (!sessionId) {
-        sessionId = await createAndActivateSession(text);
+        const nameSeed = text || sessionNameFromAttachment(pending[0]?.sourcePath);
+        sessionId = await createAndActivateSession(nameSeed);
       }
-      await client.postMessage(sessionId, text);
+      const sourcePaths = pending.map((a) => a.sourcePath);
+      const resources = sourcePaths.length
+        ? await invoke("stage_session_images", { sessionId, sourcePaths })
+        : [];
+      await client.postMessage(sessionId, { text, resources });
       draft.value = "";
+      composerAttachments.value = [];
       // Optimistic until SSE turn_accepted; createAndActivateSession must not leave this as idle.
       status.value = "running";
     } catch (error) {
@@ -872,6 +924,9 @@ export function useChatSession() {
   return {
     transcript,
     draft,
+    composerAttachments,
+    addComposerAttachments,
+    removeComposerAttachment,
     status,
     activeSessionId,
     sessionWorkspaceDir,

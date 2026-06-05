@@ -29,7 +29,7 @@ pub fn replay_records(records: &[SondaSessionEventRecord]) -> SondaSessionSnapsh
                     pending_tools.clear();
                 }
                 messages.push(ChatCompletionRequestMessage::User {
-                    content: input.content.clone(),
+                    content: input.to_user_message_content(),
                 });
             }
             SessionEventKind::AgentResponse { agent } => {
@@ -174,7 +174,10 @@ mod tests {
         record(
             seq,
             SessionEventKind::TurnAccepted {
-                input: TurnInput { content: c.into() },
+                input: TurnInput {
+                    text: c.into(),
+                    resources: Vec::new(),
+                },
             },
         )
     }

@@ -11,5 +11,5 @@ pub use factory::SessionFactory;
 pub use harness::Harness;
 pub use live::LiveSessions;
 pub use runtime::{
-    SessionEvent, SessionEventKind, SessionEventSink, SessionRuntime, TurnInput,
+    SessionEvent, SessionEventKind, SessionEventSink, SessionRuntime, TurnInput, TurnResource,
 };

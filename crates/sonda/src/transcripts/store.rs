@@ -344,7 +344,8 @@ mod tests {
             ts: 1,
             kind: SessionEventKind::TurnAccepted {
                 input: TurnInput {
-                    content: content.into(),
+                    text: content.into(),
+                    resources: Vec::new(),
                 },
             },
         }

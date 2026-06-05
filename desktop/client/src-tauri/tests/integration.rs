@@ -1,15 +1,14 @@
 //! Desktop [`build_sonda`] integration tests — exercise [`Sonda`] directly, not HTTP.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
-use std::sync::MutexGuard;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use moray_desktop_client::sonda::{
     build_sonda, ensure_sessions_dir, ensure_user_skills_dir, materialize_sessions_catalog,
     materialize_tools_catalog, SondaRuntimePaths, CHANNELS_CATALOG_FILE_NAME,
     SESSIONS_CATALOG_FILE_NAME, SESSIONS_DIR_NAME, SETTINGS_FILE_NAME, TOOLS_CATALOG_FILE_NAME,
 };
-use moray_sonda::{SondaSessionTranscripts, SondaStateEvent};
+use moray_sonda::{SondaSessionTranscripts, SondaSessionWorkspace, SondaStateEvent};
 use tokio::time::{timeout, Duration};
 
 const TEST_SESSION_ID: &str = "other";
@@ -200,14 +199,20 @@ fn write_settings_files(server_toml: &str) {
     let _paths = test_runtime_paths();
 }
 
+fn test_session_workspace(paths: &SondaRuntimePaths) -> Arc<SondaSessionWorkspace> {
+    Arc::new(SondaSessionWorkspace::new(paths.sessions_dir.clone()))
+}
+
 async fn build_test_sonda() -> moray_sonda::Sonda {
     write_default_settings_files();
-    build_sonda(&test_runtime_paths()).expect("sonda should build")
+    let paths = test_runtime_paths();
+    build_sonda(&paths, test_session_workspace(&paths)).expect("sonda should build")
 }
 
 async fn build_test_sonda_with_server_toml(server_toml: &str) -> moray_sonda::Sonda {
     write_settings_files(server_toml);
-    build_sonda(&test_runtime_paths()).expect("sonda should build")
+    let paths = test_runtime_paths();
+    build_sonda(&paths, test_session_workspace(&paths)).expect("sonda should build")
 }
 
 fn session_transcript_path(session_id: &str) -> PathBuf {

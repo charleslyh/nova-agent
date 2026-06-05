@@ -1,6 +1,30 @@
 <template>
   <footer class="composer-shell">
     <form class="composer" @submit.prevent="onFormSubmit">
+      <div v-if="attachments.length" class="composer-attachments" aria-label="待发送图片">
+        <div
+          v-for="item in attachments"
+          :key="item.id"
+          class="composer-attachment"
+        >
+          <img
+            v-if="item.previewUrl"
+            class="composer-attachment__img"
+            :src="item.previewUrl"
+            alt=""
+          />
+          <span v-else class="composer-attachment__placeholder" aria-hidden="true">图</span>
+          <button
+            type="button"
+            class="composer-attachment__remove"
+            aria-label="移除图片"
+            title="移除"
+            @click="$emit('remove-attachment', item.id)"
+          >
+            ×
+          </button>
+        </div>
+      </div>
       <textarea
         :value="draft"
         class="composer-input"
@@ -12,15 +36,18 @@
         @keydown.enter.exact="onEnter"
       />
       <div class="composer-actions">
-        <select
-          v-if="agents.length"
-          class="agent-select"
-          :value="currentAgentId"
-          @change="$emit('select-agent', $event.target.value)"
+        <button
+          v-if="showAttachButton"
+          type="button"
+          class="attach-btn"
+          aria-label="添加图片"
+          title="添加图片"
+          :disabled="isRunning"
+          @click="onPickImages"
         >
-          <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}</option>
-        </select>
-        <span v-else class="agent-spacer" />
+          +
+        </button>
+        <span v-else class="composer-actions-spacer" />
         <button
           type="button"
           class="send-btn"
@@ -54,8 +81,16 @@
 
 <script setup>
 import { computed, ref } from "vue";
+import { open } from "@tauri-apps/plugin-dialog";
+import { isTauriRuntime } from "@/lib/userImages.js";
 
-const emit = defineEmits(["submit", "cancel", "update:draft", "select-agent"]);
+const emit = defineEmits([
+  "submit",
+  "cancel",
+  "update:draft",
+  "add-attachments",
+  "remove-attachment"
+]);
 
 const props = defineProps({
   draft: {
@@ -66,21 +101,21 @@ const props = defineProps({
     type: String,
     required: true
   },
-  agents: {
+  attachments: {
     type: Array,
     default: () => []
-  },
-  currentAgentId: {
-    type: String,
-    default: ""
   }
 });
 
 const isRunning = computed(() => props.status === "running");
+const showAttachButton = computed(() => isTauriRuntime());
+const hasSendableContent = computed(
+  () => !!props.draft.trim() || props.attachments.length > 0
+);
 
 const primaryDisabled = computed(() => {
   if (isRunning.value) return false;
-  return !props.draft.trim();
+  return !hasSendableContent.value;
 });
 
 const buttonState = computed(() => {
@@ -92,6 +127,11 @@ const primaryLabel = computed(() => (isRunning.value ? "停止" : "发送"));
 
 const imeComposing = ref(false);
 
+const IMAGE_FILTER = {
+  name: "Images",
+  extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]
+};
+
 function onCompositionStart() {
   imeComposing.value = true;
 }
@@ -100,12 +140,30 @@ function onCompositionEnd() {
   imeComposing.value = false;
 }
 
+async function onPickImages() {
+  if (isRunning.value) return;
+  try {
+    const selected = await open({
+      multiple: true,
+      filters: [IMAGE_FILTER]
+    });
+    if (selected == null) return;
+    const paths = Array.isArray(selected) ? selected : [selected];
+    const normalized = paths.filter((p) => typeof p === "string" && p.length > 0);
+    if (normalized.length) {
+      emit("add-attachments", normalized);
+    }
+  } catch (error) {
+    console.error("image picker failed", error);
+  }
+}
+
 function onPrimaryClick() {
   if (isRunning.value) {
     emit("cancel");
     return;
   }
-  if (!props.draft.trim()) return;
+  if (!hasSendableContent.value) return;
   emit("submit");
 }
 
@@ -136,6 +194,56 @@ function onEnter(event) {
   padding: 14px 16px;
 }
 
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.composer-attachment {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #e0e0e4;
+  background: #f5f5f7;
+}
+
+.composer-attachment__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.composer-attachment__placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 13px;
+  color: #888;
+}
+
+.composer-attachment__remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
 .composer-input {
   width: 100%;
   resize: none;
@@ -157,20 +265,28 @@ function onEnter(event) {
   gap: 12px;
 }
 
-.agent-select {
-  height: 32px;
-  min-width: 140px;
-  max-width: 55%;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid #cfcfd4;
-  font-size: 13px;
-  background: #fff;
-  color: #333;
+.composer-actions-spacer {
+  flex: 1;
+  min-width: 0;
 }
 
-.agent-spacer {
-  flex: 1;
+.attach-btn {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid #cfcfd4;
+  background: #fff;
+  color: #333;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.attach-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .send-btn {
@@ -185,6 +301,7 @@ function onEnter(event) {
   color: #fff;
   transition: background-color 0.15s ease;
   cursor: pointer;
+  flex: 0 0 auto;
 }
 
 .send-btn-icon {

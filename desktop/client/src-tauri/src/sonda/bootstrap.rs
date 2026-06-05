@@ -16,8 +16,9 @@ use moray_core::TypedTool;
 use moray_skillhub::SkillHub;
 use moray_sonda::{
     SessionCatalogError, SkillCenter, SkillDirKind, SkillDirSource, SkillFilterKind, Sonda,
-    SondaBuilder, SondaError, SondaSessionCatalog, SondaSessionTranscripts, SondaSettingsStore,
-    SondaSettingsStoreError, SondaToolCatalog, SondaToolCatalogError, SondaToolRegistration,
+    SondaBuilder, SondaError, SondaSessionCatalog, SondaSessionTranscripts, SondaSessionWorkspace,
+    SondaSettingsStore, SondaSettingsStoreError, SondaToolCatalog, SondaToolCatalogError,
+    SondaToolRegistration,
 };
 use tracing::{info, warn};
 
@@ -166,7 +167,10 @@ fn channel_factories(workspace_dir: PathBuf) -> HashMap<String, ChannelFactoryFn
     map
 }
 
-pub fn build_sonda(paths: &SondaRuntimePaths) -> Result<Sonda, SondaBootstrapError> {
+pub fn build_sonda(
+    paths: &SondaRuntimePaths,
+    session_workspace: Arc<SondaSessionWorkspace>,
+) -> Result<Sonda, SondaBootstrapError> {
     ensure_layout(paths)?;
 
     let settings_store = Arc::new(SondaSettingsStore::load(
@@ -192,7 +196,7 @@ pub fn build_sonda(paths: &SondaRuntimePaths) -> Result<Sonda, SondaBootstrapErr
         .channel_catalog(channel_catalog)
         .channel_factories(channel_factories(paths.sessions_dir.clone()))
         .harness_components(
-            paths.sessions_dir.clone(),
+            session_workspace,
             tool_catalog,
             tool_factories(&paths.cli_path, &paths.tools_catalog_path),
         )

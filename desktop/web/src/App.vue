@@ -18,10 +18,14 @@
     >
       <div class="chat-main">
         <AppTitlebar
+          :agents="settingsCatalog.agents"
+          :current-agent-id="currentAgentId"
+          :show-agent-select="settingsCatalog.agents.length > 0"
           :show-actions="!isWelcome()"
           :show-channel-settings="!!activeChannelSessionIdForSettings"
           :show-session-detail="!!activeSessionId"
           :session-detail-open="drawerOpen"
+          @select-agent="onSelectComposerAgent"
           @reset="onResetSession"
           @open-channel-settings="openChannelSettings"
           @toggle-session-detail="toggleDrawer"
@@ -55,12 +59,12 @@
           <Composer
             :draft="draft"
             :status="status"
-            :agents="settingsCatalog.agents"
-            :current-agent-id="currentAgentId"
+            :attachments="composerAttachments"
             @update:draft="draft = $event"
+            @add-attachments="addComposerAttachments"
+            @remove-attachment="removeComposerAttachment"
             @submit="submitDraft"
             @cancel="onCancelTurn"
-            @select-agent="onSelectComposerAgent"
           />
         </div>
         </section>
@@ -162,6 +166,9 @@ import { useSessionDetailDrawer } from "@/composables/useSessionDetailDrawer";
 const {
   transcript,
   draft,
+  composerAttachments,
+  addComposerAttachments,
+  removeComposerAttachment,
   status,
   activeSessionId,
   sessionWorkspaceDir,

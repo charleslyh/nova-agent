@@ -1,7 +1,6 @@
 //! Assembled [`Sonda`] application and [`SondaBuilder`] bootstrap.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -300,7 +299,7 @@ pub struct SondaBuilder {
     session_catalog: Option<Arc<SondaSessionCatalog>>,
     session_transcripts: Option<Arc<SondaSessionTranscripts>>,
     channel_catalog: Option<Arc<ChannelCatalog>>,
-    sessions_dir: Option<PathBuf>,
+    session_workspace: Option<Arc<SondaSessionWorkspace>>,
     tool_catalog: Option<SondaToolCatalog>,
     tool_regs: Option<Vec<SondaToolRegistration>>,
     channel_factories: Option<HashMap<String, ChannelFactoryFn>>,
@@ -321,7 +320,7 @@ impl SondaBuilder {
             session_catalog: None,
             session_transcripts: None,
             channel_catalog: None,
-            sessions_dir: None,
+            session_workspace: None,
             tool_catalog: None,
             tool_regs: None,
             channel_factories: None,
@@ -358,14 +357,14 @@ impl SondaBuilder {
         self
     }
 
-    /// Inputs for [`SondaSessionHarness`] assembled inside [`Self::build`].
+    /// Inputs for [`SondaSessionHarness`] (workspace must be created by the host before [`Self::build`]).
     pub fn harness_components(
         mut self,
-        sessions_dir: impl Into<PathBuf>,
+        session_workspace: Arc<SondaSessionWorkspace>,
         tool_catalog: SondaToolCatalog,
         tools: Vec<SondaToolRegistration>,
     ) -> Self {
-        self.sessions_dir = Some(sessions_dir.into());
+        self.session_workspace = Some(session_workspace);
         self.tool_catalog = Some(tool_catalog);
         self.tool_regs = Some(tools);
         self
@@ -404,9 +403,9 @@ impl SondaBuilder {
             .channel_catalog
             .ok_or_else(|| error_missing_field("channel_catalog"))?;
 
-        let harness_sessions_dir = self
-            .sessions_dir
-            .ok_or_else(|| error_missing_field("session_harness"))?;
+        let session_workspace = self
+            .session_workspace
+            .ok_or_else(|| error_missing_field("session_workspace"))?;
 
         let harness_tool_catalog = self
             .tool_catalog
@@ -421,8 +420,6 @@ impl SondaBuilder {
             .ok_or_else(|| error_missing_field("channel_factories"))?;
 
         let authorizer = create_authorizer(settings_store.as_ref());
-
-        let session_workspace = Arc::new(SondaSessionWorkspace::new(harness_sessions_dir));
 
         let harness = Arc::new(SondaSessionHarness::new(
             settings_store.clone(),

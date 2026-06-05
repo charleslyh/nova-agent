@@ -1,11 +1,15 @@
-//! Per-session on-disk workspace paths and directory listing.
+//! Per-session on-disk workspace paths, directory listing, and upload staging.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use moray_session::TurnResource;
 use serde::Serialize;
+use uuid::Uuid;
 
-use crate::error::{FileIoError, Result};
+use crate::error::{FileIoError, InvalidContent, Result};
+
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
 
 const TREE_MAX_DEPTH: usize = 8;
 const TREE_MAX_NODES: usize = 2000;
@@ -62,6 +66,54 @@ impl SondaSessionWorkspace {
         }
     }
 
+    /// Copy picker paths into `{session_dir}/uploads/` and return staged [`TurnResource`] rows.
+    pub async fn stage_session_images(
+        &self,
+        session_id: &str,
+        source_paths: Vec<String>,
+    ) -> Result<Vec<TurnResource>> {
+        if source_paths.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let session_dir = self.session_dir(session_id);
+        if !session_dir.is_dir() {
+            return Err(InvalidContent::new(format!("unknown session: {session_id}")).into());
+        }
+
+        let uploads_dir = session_dir.join("uploads");
+        tokio::fs::create_dir_all(&uploads_dir)
+            .await
+            .map_err(|source| FileIoError::new("create uploads dir", uploads_dir.clone(), source))?;
+
+        let mut staged = Vec::with_capacity(source_paths.len());
+        for source in source_paths {
+            let src = PathBuf::from(&source);
+            if !src.is_file() {
+                return Err(InvalidContent::new(format!("not a file: {source}")).into());
+            }
+            if !is_allowed_image(&src) {
+                return Err(
+                    InvalidContent::new(format!("unsupported image type: {source}")).into(),
+                );
+            }
+            let ext = src
+                .extension()
+                .and_then(|e| e.to_str())
+                .filter(|e| !e.is_empty())
+                .unwrap_or("bin");
+            let dest = uploads_dir.join(format!("{}.{}", Uuid::new_v4(), ext));
+            tokio::fs::copy(&src, &dest).await.map_err(|source| {
+                FileIoError::new("copy image into session uploads", dest.clone(), source)
+            })?;
+            staged.push(TurnResource::Image {
+                path: dest.to_string_lossy().into_owned(),
+            });
+        }
+
+        Ok(staged)
+    }
+
     /// Recursively list files under the session workspace (depth and node caps apply).
     pub fn list_session_tree(&self, session_id: &str) -> Result<SessionWorkspaceTree> {
         let root = self.session_dir(session_id);
@@ -74,6 +126,13 @@ impl SondaSessionWorkspace {
             entries,
         })
     }
+}
+
+fn is_allowed_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|ext| IMAGE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
 }
 
 fn should_skip_entry(name: &str) -> bool {
@@ -170,6 +229,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let workspace = SondaSessionWorkspace::new(dir.path());
         assert!(workspace.list_session_tree("no-such-session").is_err());
+    }
+
+    #[test]
+    fn allows_common_image_extensions() {
+        assert!(is_allowed_image(Path::new("/tmp/a.PNG")));
+        assert!(is_allowed_image(Path::new("/tmp/photo.jpeg")));
+        assert!(!is_allowed_image(Path::new("/tmp/doc.pdf")));
     }
 
     #[test]

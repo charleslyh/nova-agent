@@ -493,6 +493,7 @@ mod tests {
         let channels_path = data_dir.join("channels.toml");
         let channel_catalog = Arc::new(ChannelCatalog::open(&channels_path, HashMap::new())?);
 
+        let session_workspace = Arc::new(crate::SondaSessionWorkspace::new(sessions_dir.clone()));
         let _ = SondaBuilder::new()
             .settings(settings_store)
             .skill_center(skill_center)
@@ -501,7 +502,7 @@ mod tests {
             .session_transcripts(session_transcripts)
             .channel_catalog(channel_catalog)
             .harness_components(
-                sessions_dir.clone(),
+                session_workspace,
                 testing_tools_catalog(),
                 testing_registrations(testing_shell_env()),
             )

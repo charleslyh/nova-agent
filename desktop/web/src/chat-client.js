@@ -62,11 +62,18 @@ export async function createHttpChatClient() {
       await request(`${baseUrl}/sessions/${sid}`, { method: "DELETE" });
     },
 
-    async postMessage(sessionId, content) {
+    async postMessage(sessionId, input) {
       const sessionBase = `${baseUrl}/sessions/${encodeURIComponent(sessionId)}`;
+      const body =
+        typeof input === "string"
+          ? { text: input, resources: [] }
+          : {
+              text: input?.text ?? "",
+              resources: Array.isArray(input?.resources) ? input.resources : []
+            };
       await request(`${sessionBase}/submit`, {
         method: "POST",
-        body: JSON.stringify({ content })
+        body: JSON.stringify(body)
       });
     },
 

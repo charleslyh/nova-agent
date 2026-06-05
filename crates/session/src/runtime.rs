@@ -74,23 +74,57 @@ impl ActiveTurn {
     }
 }
 
+/// A user-attached resource for one turn (images only for now).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "kind", rename_all = "snake_case"))]
+pub enum TurnResource {
+    Image { path: String },
+}
+
 /// User-authored payload for one chat turn
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TurnInput {
-    pub content: String,
+    #[cfg_attr(feature = "serde", serde(alias = "content"))]
+    pub text: String,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub resources: Vec<TurnResource>,
+}
+
+impl TurnInput {
+    /// Format for [`ChatCompletionRequestMessage::User`] ingestion and replay.
+    pub fn to_user_message_content(&self) -> String {
+        if self.resources.is_empty() {
+            return self.text.clone();
+        }
+        let mut parts = Vec::new();
+        if !self.text.trim().is_empty() {
+            parts.push(self.text.clone());
+        }
+        for resource in &self.resources {
+            match resource {
+                TurnResource::Image { path } => parts.push(format!("[IMAGE:{path}]")),
+            }
+        }
+        parts.join("\n")
+    }
 }
 
 impl From<String> for TurnInput {
-    fn from(content: String) -> Self {
-        Self { content }
+    fn from(text: String) -> Self {
+        Self {
+            text,
+            resources: Vec::new(),
+        }
     }
 }
 
 impl From<&str> for TurnInput {
     fn from(s: &str) -> Self {
         Self {
-            content: s.to_owned(),
+            text: s.to_owned(),
+            resources: Vec::new(),
         }
     }
 }
@@ -184,7 +218,7 @@ impl SessionRuntime {
         let guard = self.request_active_guard()?;
         let cancellation = self.active_turn.begin();
 
-        let content = input.content.clone();
+        let content = input.to_user_message_content();
         let event = event_of(self.session_id.as_str(), SessionEventKind::TurnAccepted { input });
         self.event_sink.append(&event)?;
 

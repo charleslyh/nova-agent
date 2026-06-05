@@ -12,11 +12,25 @@ use moray_desktop_client::bundle;
 use moray_desktop_client::log::init_tracing;
 use moray_desktop_client::sonda;
 use moray_desktop_server::SondaGateway;
-use moray_sonda::Sonda;
+use moray_sonda::{Sonda, SondaSessionWorkspace};
 
 struct SharedServer {
     gateway: Arc<Mutex<Option<SondaGateway>>>,
     shutting_down: Arc<AtomicBool>,
+}
+
+#[tauri::command]
+async fn stage_session_images(
+    sonda: State<'_, Arc<Sonda>>,
+    session_id: String,
+    source_paths: Vec<String>,
+) -> Result<Vec<moray_session::TurnResource>, String> {
+    sonda
+        .inner()
+        .session_workspace
+        .stage_session_images(session_id.as_str(), source_paths)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -73,7 +87,10 @@ fn startup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let paths = bundle::resolve_runtime_paths(app.handle())
         .expect("failed to resolve runtime paths");
 
-    let sonda = Arc::new(sonda::build_sonda(&paths).expect("sonda build failed"));
+    let session_workspace = Arc::new(SondaSessionWorkspace::new(paths.sessions_dir.clone()));
+    let sonda = Arc::new(
+        sonda::build_sonda(&paths, session_workspace).expect("sonda build failed"),
+    );
     app.manage(sonda.clone());
     tauri::async_runtime::block_on(sonda.startup());
 
@@ -133,9 +150,10 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(window_layout::init())
         .manage(create_shared_server())
-        .invoke_handler(tauri::generate_handler![get_server_url])
+        .invoke_handler(tauri::generate_handler![get_server_url, stage_session_images])
         .setup(startup_app)
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
