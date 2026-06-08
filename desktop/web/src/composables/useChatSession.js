@@ -7,6 +7,8 @@ import {
   mapChannelInstance,
 } from "@/channelInstances.js";
 
+export const MAX_COMPOSER_IMAGE_ATTACHMENTS = 3;
+
 export function useChatSession() {
   const transcript = ref([]);
   const draft = ref("");
@@ -67,13 +69,20 @@ export function useChatSession() {
   }
 
   function addComposerAttachments(paths) {
+    const remaining =
+      MAX_COMPOSER_IMAGE_ATTACHMENTS - composerAttachments.value.length;
+    if (remaining <= 0) return;
+
+    let added = 0;
     for (const sourcePath of paths) {
+      if (added >= remaining) break;
       if (typeof sourcePath !== "string" || !sourcePath) continue;
       composerAttachments.value.push({
         id: `${Date.now()}-${Math.random()}`,
         sourcePath,
         previewUrl: previewSrcForPickerPath(sourcePath)
       });
+      added += 1;
     }
   }
 

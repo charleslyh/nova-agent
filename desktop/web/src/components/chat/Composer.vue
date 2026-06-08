@@ -40,9 +40,9 @@
           v-if="showAttachButton"
           type="button"
           class="attach-btn"
-          aria-label="添加图片"
-          title="添加图片"
-          :disabled="isRunning"
+          :disabled="isRunning || attachments.length >= MAX_COMPOSER_IMAGE_ATTACHMENTS"
+          :title="attachButtonTitle"
+          :aria-label="attachButtonTitle"
           @click="onPickImages"
         >
           +
@@ -82,6 +82,7 @@
 <script setup>
 import { computed, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
+import { MAX_COMPOSER_IMAGE_ATTACHMENTS } from "@/composables/useChatSession.js";
 import { isTauriRuntime } from "@/lib/userImages.js";
 
 const emit = defineEmits([
@@ -109,6 +110,14 @@ const props = defineProps({
 
 const isRunning = computed(() => props.status === "running");
 const showAttachButton = computed(() => isTauriRuntime());
+const attachAtLimit = computed(
+  () => props.attachments.length >= MAX_COMPOSER_IMAGE_ATTACHMENTS
+);
+const attachButtonTitle = computed(() =>
+  attachAtLimit.value
+    ? `最多添加 ${MAX_COMPOSER_IMAGE_ATTACHMENTS} 张图片`
+    : "添加图片"
+);
 const hasSendableContent = computed(
   () => !!props.draft.trim() || props.attachments.length > 0
 );
@@ -141,7 +150,7 @@ function onCompositionEnd() {
 }
 
 async function onPickImages() {
-  if (isRunning.value) return;
+  if (isRunning.value || attachAtLimit.value) return;
   try {
     const selected = await open({
       multiple: true,
