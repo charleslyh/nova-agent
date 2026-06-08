@@ -230,14 +230,15 @@ watch(
   border: 1px solid #d5d5d9;
   border-radius: 6px;
   padding: 5px 10px;
-  background: #fff;
+  background-color: #fff;
   color: #4b4b4b;
   font-size: 12px;
   cursor: pointer;
+  font-family: inherit;
 }
 
 .workspace-path-btn:hover:not(:disabled) {
-  background: #f5f5f7;
+  background-color: #f5f5f7;
 }
 
 .workspace-path-btn:disabled {
@@ -258,14 +259,15 @@ watch(
   border: 1px solid #d5d5d9;
   border-radius: 6px;
   padding: 6px 8px;
-  background: #fff;
+  background-color: #fff;
   color: #4b4b4b;
   font-size: 11px;
   cursor: pointer;
+  font-family: inherit;
 }
 
 .open-btn:hover:not(:disabled) {
-  background: #f5f5f7;
+  background-color: #f5f5f7;
 }
 
 .open-btn:disabled {

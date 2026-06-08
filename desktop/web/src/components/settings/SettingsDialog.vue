@@ -884,6 +884,7 @@ function closeEdit() {
   border-radius: 8px;
   padding: 10px 12px;
   font-size: 14px;
+  background-color: #fff;
 }
 
 .hub-error {

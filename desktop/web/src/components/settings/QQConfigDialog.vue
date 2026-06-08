@@ -220,14 +220,17 @@ async function handleSave() {
 
 .field input[type="text"],
 .field input[type="password"] {
+  box-sizing: border-box;
   padding: 8px 10px;
   border: 1px solid rgba(0, 0, 0, 0.15);
   border-radius: 6px;
+  font-size: 13px;
+  background-color: #fff;
 }
 
 .field--readonly input[readonly] {
   cursor: not-allowed;
-  background: #f5f5f5;
+  background-color: #f5f5f5;
   color: #666;
 }
 
@@ -255,10 +258,11 @@ async function handleSave() {
   border: 1px solid rgba(0, 0, 0, 0.12);
   cursor: pointer;
   font-size: 13px;
+  font-family: inherit;
 }
 
 .btn--primary {
-  background: #111;
+  background-color: #111;
   color: #fff;
   border-color: #111;
 }
@@ -269,7 +273,7 @@ async function handleSave() {
 }
 
 .btn--muted {
-  background: #f5f5f5;
+  background-color: #f5f5f5;
 }
 
 .dialog-loading {

@@ -78,7 +78,7 @@ function itemPlatform(item) {
   padding: 6px 10px;
   border: none;
   border-radius: 5px;
-  background: transparent;
+  background-color: transparent;
   color: #1a1a1e;
   font-size: 13px;
   font-weight: 400;

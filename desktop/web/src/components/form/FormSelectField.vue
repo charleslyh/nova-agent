@@ -47,7 +47,7 @@ const emit = defineEmits(["update:modelValue"]);
   font-size: 14px;
   line-height: 22px;
   font-family: inherit;
-  background: #fff;
+  background-color: #fff;
   color: inherit;
 }
 
@@ -60,6 +60,6 @@ const emit = defineEmits(["update:modelValue"]);
 .field select.field-input:disabled {
   cursor: not-allowed;
   opacity: 0.65;
-  background: #f5f5f5;
+  background-color: #f5f5f5;
 }
 </style>

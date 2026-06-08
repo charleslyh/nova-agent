@@ -36,6 +36,31 @@ defineProps({
   margin-top: 8px;
 }
 
+.auth-actions button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #d5d5d9;
+  background-color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.auth-actions button:first-child {
+  border-color: #1976ff;
+  background-color: #1976ff;
+  color: #fff;
+}
+
+.auth-actions button:last-child {
+  color: #8b2e2e;
+}
+
+.auth-actions button:last-child:hover {
+  background-color: #fff5f5;
+  border-color: #e0a0a0;
+}
+
 .auth-call-id {
   color: #75757b;
 }

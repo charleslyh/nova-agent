@@ -242,7 +242,7 @@ async function onSave() {
   border: 1px solid #d5d5d9;
   border-radius: 6px;
   padding: 4px 12px;
-  background: #fff;
+  background-color: #fff;
   font-size: 12px;
   cursor: pointer;
 }
@@ -275,7 +275,7 @@ async function onSave() {
   font-size: 14px;
   line-height: 22px;
   font-family: inherit;
-  background: #fff;
+  background-color: #fff;
   color: inherit;
 }
 
@@ -346,8 +346,6 @@ async function onSave() {
 .tool-chip-check {
   margin: 0;
   flex-shrink: 0;
-  width: 14px;
-  height: 14px;
 }
 
 .tool-chip-label {

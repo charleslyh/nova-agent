@@ -132,11 +132,11 @@ defineEmits(["reset", "open-channel-settings", "toggle-session-detail", "select-
   height: 28px;
   min-width: 140px;
   max-width: min(240px, 40vw);
-  padding: 4px 10px;
+  padding: 4px 28px 4px 10px;
   border-radius: 6px;
   border: 1px solid #d5d5d9;
   font-size: 12px;
-  background: #fff;
+  background-color: #fff;
   color: #333;
   cursor: pointer;
 }
@@ -151,17 +151,18 @@ defineEmits(["reset", "open-channel-settings", "toggle-session-detail", "select-
   border: 1px solid #d5d5d9;
   border-radius: 6px;
   padding: 5px 12px;
-  background: #fff;
+  background-color: #fff;
   color: #4b4b4b;
   font-size: 12px;
   cursor: pointer;
+  font-family: inherit;
   -webkit-app-region: no-drag;
   app-region: no-drag;
   flex-shrink: 0;
 }
 
 .titlebar-btn:hover {
-  background: #f5f5f7;
+  background-color: #f5f5f7;
 }
 
 .titlebar-icon-btn {
