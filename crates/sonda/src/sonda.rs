@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    SkillCenter, SondaSessionCatalog, SondaSessionFactory, SondaSessionHarness,
+    SkillCenter, SondaAgentRunner, SondaSessionCatalog, SondaSessionFactory,
     SondaSessionTranscripts, SondaSessionWorkspace, SondaSettingsStore, SondaSnapshot,
     SondaToolCatalog, SondaToolRegistration, UnregisterSkillError,
 };
@@ -59,7 +59,7 @@ pub struct Sonda {
     pub session_catalog: Arc<SondaSessionCatalog>,
     pub session_transcripts: Arc<SondaSessionTranscripts>,
     pub session_workspace: Arc<SondaSessionWorkspace>,
-    pub harness: Arc<SondaSessionHarness>,
+    pub agent_runner: Arc<SondaAgentRunner>,
     pub skill_hub: SkillHub,
     pub authorizer: Arc<dyn ToolCallAuthorizer>,
     pub snapshot: Arc<SondaSnapshot>,
@@ -76,7 +76,7 @@ impl Sonda {
         session_catalog: Arc<SondaSessionCatalog>,
         session_transcripts: Arc<SondaSessionTranscripts>,
         session_workspace: Arc<SondaSessionWorkspace>,
-        harness: Arc<SondaSessionHarness>,
+        agent_runner: Arc<SondaAgentRunner>,
         skill_hub: SkillHub,
         authorizer: Arc<dyn ToolCallAuthorizer>,
         snapshot: Arc<SondaSnapshot>,
@@ -90,7 +90,7 @@ impl Sonda {
             session_catalog,
             session_transcripts,
             session_workspace,
-            harness,
+            agent_runner,
             skill_hub,
             authorizer,
             snapshot,
@@ -144,7 +144,7 @@ impl Sonda {
         allowed_tools: Vec<String>,
         character: Option<String>,
     ) -> Result<()> {
-        self.harness.validate_allowed_tools(&allowed_tools)?;
+        self.agent_runner.validate_allowed_tools(&allowed_tools)?;
 
         self.settings_store.update_agent(
             agent_id,
@@ -357,7 +357,7 @@ impl SondaBuilder {
         self
     }
 
-    /// Inputs for [`SondaSessionHarness`] (workspace must be created by the host before [`Self::build`]).
+    /// Inputs for [`SondaAgentRunner`] (workspace must be created by the host before [`Self::build`]).
     pub fn harness_components(
         mut self,
         session_workspace: Arc<SondaSessionWorkspace>,
@@ -421,19 +421,20 @@ impl SondaBuilder {
 
         let authorizer = create_authorizer(settings_store.as_ref());
 
-        let harness = Arc::new(SondaSessionHarness::new(
+        let agent_runner = Arc::new(SondaAgentRunner::new(
             settings_store.clone(),
             session_catalog.clone(),
             authorizer.clone(),
             harness_tool_catalog,
             session_workspace.clone(),
             harness_tools,
+            true,
         )?);
 
         validate_dependencies(
             settings_store.as_ref(),
             session_catalog.as_ref(),
-            harness.as_ref(),
+            agent_runner.as_ref(),
         )?;
 
         let snapshot = Arc::new(SondaSnapshot::new(session_catalog.as_ref()));
@@ -444,7 +445,7 @@ impl SondaBuilder {
             skill_center.clone(),
             session_catalog.clone(),
             session_transcripts.clone(),
-            harness.clone(),
+            agent_runner.clone(),
         ));
 
         let live_sessions = LiveSessions::new(session_factory);
@@ -462,7 +463,7 @@ impl SondaBuilder {
             session_catalog,
             session_transcripts,
             session_workspace,
-            harness,
+            agent_runner,
             skill_hub,
             authorizer,
             snapshot,
@@ -476,12 +477,12 @@ impl SondaBuilder {
 fn validate_dependencies(
     settings: &SondaSettingsStore,
     sessions: &SondaSessionCatalog,
-    harness: &SondaSessionHarness,
+    agent_runner: &SondaAgentRunner,
 ) -> Result<()> {
     let settings_catalog = settings.catalog();
 
     for agent in &settings_catalog.agents {
-        harness.validate_allowed_tools(&agent.allowed_tools)?;
+        agent_runner.validate_allowed_tools(&agent.allowed_tools)?;
     }
 
     let default_agent_id = sessions.default_agent_id();

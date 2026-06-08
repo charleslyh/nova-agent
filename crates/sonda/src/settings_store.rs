@@ -452,7 +452,7 @@ mod tests {
     use crate::sonda::SondaBuilder;
     use moray_skillhub::SkillHub;
     use crate::skill_center::{SkillCenter, SkillDirKind, SkillDirSource};
-    use crate::harness::{SondaSessionHarness, SondaToolRegistration};
+    use crate::runner::{SondaAgentRunner, SondaToolRegistration};
     use crate::SondaToolCatalog;
     use moray_extensions::tools::{
         CalcTool, FileReadTool, FileWriteTool, ImageCreateTool, ImageEditTool, ShellTool,
@@ -993,7 +993,7 @@ allowed_tools = ["calc", "calc"]
         std::fs::write(&sessions, r#"default_agent_id = "z9y8x7w6""#).unwrap();
         let settings_store = Arc::new(open_test_store(&server).unwrap());
         let session_catalog = Arc::new(SondaSessionCatalog::open(&sessions).unwrap());
-        let factory = testing_session_harness(
+        let factory = testing_session_agent_runner(
             settings_store,
             session_catalog,
             authorizer,
@@ -1070,20 +1070,21 @@ parameters = '{}'
         ]
     }
 
-    fn testing_session_harness(
+    fn testing_session_agent_runner(
         settings_store: Arc<SondaSettingsStore>,
         session_catalog: Arc<SondaSessionCatalog>,
         authorizer: Arc<dyn moray_core::ToolCallAuthorizer>,
         sessions_dir: std::path::PathBuf,
-    ) -> crate::error::Result<Arc<SondaSessionHarness>> {
+    ) -> crate::error::Result<Arc<SondaAgentRunner>> {
         let workspace = Arc::new(crate::SondaSessionWorkspace::new(sessions_dir));
-        Ok(Arc::new(SondaSessionHarness::new(
+        Ok(Arc::new(SondaAgentRunner::new(
             settings_store,
             session_catalog,
             authorizer,
             testing_tools_catalog(),
             workspace,
             testing_registrations(testing_shell_env()),
+            true,
         )?))
     }
 

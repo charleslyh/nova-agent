@@ -1,13 +1,19 @@
-//! Per-session [`Harness`] for Sonda live chat sessions.
+//! Shared [`SondaAgentRunner`] for Sonda live chat sessions.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 
+use futures::Stream;
 use moray_extensions::completions::{Endpoint, OpenAIChatCompletion};
-use moray_core::{ChatCompletion, Tool, ToolCallAuthorizer, ToolboxBuilder};
-use moray_session::{Harness, SessionError};
+use moray_core::{
+    AgentRequestBuilder, AgentResponseEvent, ChatCompletion, ContextEngine, Tool,
+    ToolCallAuthorizer, ToolboxBuilder,
+};
+use moray_session::{AgentRunner, SessionError};
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use crate::error::{InvalidContent, Result, SondaError};
 use crate::{
@@ -23,7 +29,7 @@ pub struct SondaToolCatalogEntry {
 
 /// One registered tool id and its per-session instance builder.
 ///
-/// [`SondaSessionHarness::create_toolbox`] passes per-session dir from [`SondaSessionWorkspace`].
+/// [`SondaAgentRunner::create_toolbox`] passes per-session dir from [`SondaSessionWorkspace`].
 /// Tools that do not use a workspace may ignore it (e.g. `|_|`).
 pub struct SondaToolRegistration {
     pub name: &'static str,
@@ -42,20 +48,21 @@ impl SondaToolRegistration {
     }
 }
 
-/// Per-session harness: toolbox and TOML-backed completion.
+/// Shared agent runner: toolbox, TOML-backed completion, and agent stream assembly.
 ///
 /// Holds snapshots of shared [`SondaSettingsStore`] / [`SondaSessionCatalog`] so completions
 /// pick up dynamic agent changes without restarting the session.
-pub struct SondaSessionHarness {
+pub struct SondaAgentRunner {
     settings_store: Arc<SondaSettingsStore>,
     session_catalog: Arc<SondaSessionCatalog>,
     authorizer: Arc<dyn ToolCallAuthorizer>,
     catalog: SondaToolCatalog,
     workspace: Arc<SondaSessionWorkspace>,
     registrations: Vec<SondaToolRegistration>,
+    stream: bool,
 }
 
-impl SondaSessionHarness {
+impl SondaAgentRunner {
     pub fn new(
         settings_store: Arc<SondaSettingsStore>,
         session_catalog: Arc<SondaSessionCatalog>,
@@ -63,6 +70,7 @@ impl SondaSessionHarness {
         catalog: SondaToolCatalog,
         workspace: Arc<SondaSessionWorkspace>,
         registrations: Vec<SondaToolRegistration>,
+        stream: bool,
     ) -> Result<Self> {
         if registrations.is_empty() {
             return Err(InvalidContent::new("at least one tool must be registered").into());
@@ -95,6 +103,7 @@ impl SondaSessionHarness {
             catalog,
             workspace,
             registrations,
+            stream,
         })
     }
 
@@ -154,13 +163,8 @@ impl SondaSessionHarness {
         self.settings_store
             .resolve_completion_endpoint(&agent_id)
     }
-}
 
-impl Harness for SondaSessionHarness {
-    fn create_toolbox(
-        &self,
-        session_id: &str,
-    ) -> std::result::Result<Arc<moray_core::Toolbox>, SessionError> {
+    fn create_toolbox(&self, session_id: &str) -> std::result::Result<Arc<moray_core::Toolbox>, SessionError> {
         let agent_id = self
             .resolve_session_agent_id(session_id)
             .map_err(|e| SessionError::from(moray_core::MorayError::from(e)))?;
@@ -209,5 +213,27 @@ impl Harness for SondaSessionHarness {
             .resolve_session_completion_endpoint(session_id)
             .map_err(|e| SessionError::from(moray_core::MorayError::from(e)))?;
         Ok(Arc::new(OpenAIChatCompletion::new(endpoint)))
+    }
+}
+
+impl AgentRunner for SondaAgentRunner {
+    fn create_agent_stream(
+        &self,
+        session_id: &str,
+        context: Arc<dyn ContextEngine>,
+        cancellation: CancellationToken,
+    ) -> std::result::Result<Pin<Box<dyn Stream<Item = AgentResponseEvent> + Send>>, SessionError>
+    {
+        let completion = self.create_completion(session_id)?;
+        let toolbox = self.create_toolbox(session_id)?;
+
+        AgentRequestBuilder::new()
+            .completion(completion)
+            .toolbox(toolbox)
+            .context(context)
+            .stream(self.stream)
+            .cancellation(cancellation)
+            .run()
+            .map_err(SessionError::from)
     }
 }

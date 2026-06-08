@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines **`moray-session`**: recoverable multi-turn **session domain** types and orchestration (event log, runtime, harness wiring). This crate defines **traits and models**, not concrete storage, model HTTP, or product TOML.
+Defines **`moray-session`**: recoverable multi-turn **session domain** types and orchestration (event log, runtime, agent runner wiring). This crate defines **traits and models**, not concrete storage, model HTTP, or product TOML.
 
 ## Requirements
 
@@ -19,19 +19,19 @@ The repository SHALL provide `moray-session` at `crates/session` as a workspace 
 
 `moray-session` SHALL define session-scoped extension traits including at minimum:
 
-- `Harness` — factory for per-turn `ChatCompletion`, `Toolbox`, and `Preambler` from `moray-core`
+- `AgentRunner` — factory for per-turn `Stream<Item = AgentResponseEvent>` given a session-owned `ContextEngine` and `CancellationToken`
 - `SessionEventSink` — append persisted `SessionEvent` rows
 - `SessionEventSink` — in-process delivery of live events
 
-#### Scenario: Harness is not defined in moray-core
+#### Scenario: AgentRunner is not defined in moray-core
 
 - **WHEN** inspecting `moray-core`
-- **THEN** `Harness` MUST NOT be defined there
-- **AND** `Harness` MUST be defined in `moray-session`
+- **THEN** `AgentRunner` MUST NOT be defined there
+- **AND** `AgentRunner` MUST be defined in `moray-session`
 
 ### Requirement: Session runtime
 
-`moray-session` SHALL provide `SessionRuntime` with `submit`, `reset`, and busy-session semantics, driven by a `Harness` and `SessionEventSink` supplied at construction.
+`moray-session` SHALL provide `SessionRuntime` with `submit`, `reset`, and busy-session semantics, driven by an `AgentRunner` and `SessionEventSink` supplied at construction. `SessionRuntime` MUST own `ContextEngine` lifecycle and cancellation; it MUST NOT assemble `ChatCompletion` or `Toolbox` directly.
 
 #### Scenario: Submit persists and streams agent events
 

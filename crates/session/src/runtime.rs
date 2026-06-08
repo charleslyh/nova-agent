@@ -8,12 +8,9 @@ use tokio::spawn;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use super::harness::Harness;
+use super::runner::AgentRunner;
 use crate::{Result, SessionError};
-use moray_core::{
-    AgentRequestBuilder, AgentResponseEvent, ChatCompletionRequestMessage, ContextEngine,
-    MorayError,
-};
+use moray_core::{AgentResponseEvent, ChatCompletionRequestMessage, ContextEngine, MorayError};
 
 /// Per-turn signals: cancel token and [`oneshot`] completion.
 struct TurnControl {
@@ -208,10 +205,9 @@ pub struct SessionEvent {
 
 pub struct SessionRuntime {
     session_id: String,
-    stream: bool,
     event_sink: Arc<dyn SessionEventSink>,
     context: Arc<dyn ContextEngine>,
-    harness: Arc<dyn Harness>,
+    agent_runner: Arc<dyn AgentRunner>,
     inflight: InflightSlot,
 }
 
@@ -235,13 +231,11 @@ impl SessionRuntime {
         session_id: impl Into<String>,
         event_sink: Arc<dyn SessionEventSink>,
         context: Arc<dyn ContextEngine>,
-        harness: Arc<dyn Harness>,
-        stream: bool,
+        agent_runner: Arc<dyn AgentRunner>,
     ) -> Self {
         Self {
             session_id: session_id.into(),
-            harness,
-            stream,
+            agent_runner,
             event_sink,
             context,
             inflight: InflightSlot::new(),
@@ -263,18 +257,13 @@ impl SessionRuntime {
         // without pulling session types into moray-core.
         self.context.ingest(vec![user_message]).await?;
 
-        // Sessions outlive settings edits; resolve completion/toolbox from the harness each
+        // Sessions outlive settings edits; the agent runner resolves completion/toolbox each
         // turn so model and tool wiring changes apply on the next submit without restart.
-        let completion = self.harness.create_completion(self.session_id.as_str())?;
-        let toolbox = self.harness.create_toolbox(self.session_id.as_str())?;
-
-        let agent_stream = AgentRequestBuilder::new()
-            .completion(completion)
-            .toolbox(toolbox)
-            .context(self.context.clone())
-            .stream(self.stream)
-            .cancellation(cancellation)
-            .run()?;
+        let agent_stream = self.agent_runner.create_agent_stream(
+            self.session_id.as_str(),
+            self.context.clone(),
+            cancellation,
+        )?;
 
         spawn(Self::drain_agent_stream(
             self.session_id.clone(),

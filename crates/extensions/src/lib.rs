@@ -13,5 +13,5 @@ pub mod skills;
 pub mod tools;
 
 pub use moray_session::{
-    Harness, SessionEvent, SessionEventKind, SessionEventSink, SessionRuntime, TurnInput,
+    SessionEvent, SessionEventKind, SessionEventSink, SessionRuntime, TurnInput,
 };

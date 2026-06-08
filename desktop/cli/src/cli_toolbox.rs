@@ -1,7 +1,4 @@
 //! CLI-local toolbox: registered [`Tool`] instances for `tool list` / `tool run` / `tool schema`.
-//!
-//! Unlike [`moray_core::Toolbox`], this is a static, session-less set of tools built at startup.
-//! Per-session assembly lives in [`moray_sonda::SondaSessionHarness`].
 
 use std::collections::HashMap;
 use std::io::Write;

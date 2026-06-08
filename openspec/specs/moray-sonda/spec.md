@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines **`moray-sonda`**: the **Sonda application framework** — configuration stores, session admission, in-process runtime registry wiring, and shared app errors for building desktop-class agents. **Sonda does not choose** which tools, preamble text, or env-based completion strategy to use; concrete applications supply those via `moray_session::Harness` (or factories) when assembling `AppState`.
+Defines **`moray-sonda`**: the **Sonda application framework** — configuration stores, session admission, in-process runtime registry wiring, and shared app errors for building desktop-class agents. **Sonda does not choose** which tools, preamble text, or env-based completion strategy to use; concrete applications supply those via `moray_session::AgentRunner` (or factories) when assembling `AppState`.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ The repository SHALL provide `moray-sonda` at `crates/sonda` depending on `moray
 
 #### Scenario: Settings expose resolution, not tool policy
 
-- **WHEN** a harness needs a model endpoint for an agent
+- **WHEN** an agent runner needs a model endpoint for an agent
 - **THEN** it MUST obtain `Endpoint` (or equivalent) via `SondaSettingsStore` indirection
 - **AND** `moray-sonda` MUST NOT hard-require a single global tool list inside the framework crate as the only supported policy
 
@@ -36,13 +36,13 @@ The repository SHALL provide `moray-sonda` at `crates/sonda` depending on `moray
 
 `moray-sonda` SHALL provide `SkillCenter` (catalog / `detail` / `skills(SkillFilterKind)` / `register_from_dir` / `unregister`) mirroring the toolbox factory pattern; `SkillFilterKind` MUST support `All` and `Ids`. `register_from_dir` and `unregister` update the in-process catalog only (no filesystem delete). `Sonda::install_skill` and `Sonda::uninstall_skill` SHALL orchestrate `SkillHub` download or disk removal with catalog changes. Live sessions MUST inject registered skills into the system prompt via `SkillsSection` on `TemplatedPreambler`.
 
-Harness instances used when activating a live session MUST be **supplied by the concrete application** (for example `SondaSessionHarness` in `moray-sonda` for desktop), not baked in as the only supported policy inside a lower crate.
+`AgentRunner` instances used when activating a live session MUST be **supplied by the concrete application** (for example `SondaAgentRunner` in `moray-sonda` for desktop), not baked in as the only supported policy inside a lower crate. `SondaAgentRunner` MUST resolve per-session `ChatCompletion` and `Toolbox`, then assemble and start the agent run stream internally.
 
-#### Scenario: Desktop owns harness policy
+#### Scenario: Desktop owns agent runner policy
 
 - **WHEN** the Tauri/desktop stack starts sessions
-- **THEN** the application layer MUST provide the `Harness` implementation that selects tools and preamble
-- **AND** `moray-sonda` MUST only require the `Harness` + shared `Arc` dependencies needed for framework wiring
+- **THEN** the application layer MUST provide the `AgentRunner` implementation that selects tools, completion, and preamble wiring
+- **AND** `moray-sonda` MUST only require the `AgentRunner` + shared `Arc` dependencies needed for framework wiring
 
 ### Requirement: Sonda error surface
 
@@ -53,9 +53,9 @@ Harness instances used when activating a live session MUST be **supplied by the 
 - **WHEN** `Sonda` encounters `SessionTranscriptsError`
 - **THEN** it MUST map into `SondaError` at the sonda framework layer
 
-### Requirement: Sonda excludes application-constrained harnesses
+### Requirement: Sonda excludes application-constrained agent runners
 
-`moray-sonda` MUST NOT define env-var `Harness` types or REPL-only startup helpers intended solely for one example binary; those belong in `desktop/` or other app crates.
+`moray-sonda` MUST NOT define env-var `AgentRunner` types or REPL-only startup helpers intended solely for one example binary; those belong in `desktop/` or other app crates.
 
 ### Requirement: IM channel orchestration
 

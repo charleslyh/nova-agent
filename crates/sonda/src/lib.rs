@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 //! **Sonda** — TOML-backed multi-agent application framework for Moray desktop.
 
+mod runner;
 mod error;
-mod harness;
 mod session_catalog;
 mod session_workspace;
 mod session_factory;
@@ -17,7 +17,7 @@ pub use error::{
     BadEnvironmentVariable, FileIoError, InvalidArguments, InvalidContent, MissingReference,
     Result, SondaError, SondaSessionError,
 };
-pub use harness::{SondaSessionHarness, SondaToolCatalogEntry, SondaToolRegistration};
+pub use runner::{SondaAgentRunner, SondaToolCatalogEntry, SondaToolRegistration};
 pub use session_catalog::{SessionCatalogEntry, SessionCatalogError, SondaSessionCatalog};
 pub use session_workspace::{
     SessionWorkspaceEntry, SessionWorkspacePath, SessionWorkspaceTree, SondaSessionWorkspace,

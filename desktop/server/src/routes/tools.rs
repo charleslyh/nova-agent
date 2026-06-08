@@ -27,10 +27,10 @@ struct GetToolsRes {
     tools: Vec<SondaToolCatalogEntry>,
 }
 
-/// Server-registered built-in tools (from `SondaSessionHarness` registration, not TOML settings).
+/// Server-registered built-in tools (from `SondaAgentRunner` registration, not TOML settings).
 async fn tools_list(State(sonda): State<Arc<Sonda>>) -> impl IntoResponse {
     Json(GetToolsRes {
-        tools: sonda.harness.tool_entries(),
+        tools: sonda.agent_runner.tool_entries(),
     })
     .into_response()
 }

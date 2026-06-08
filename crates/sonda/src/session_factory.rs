@@ -5,11 +5,11 @@ use std::sync::Arc;
 use moray_extensions::context::CompositeContextEngineBuilder;
 use moray_extensions::preambles::{SkillsSection, TemplatedPreamblerBuilder};
 use moray_core::ContextEngine;
-use moray_session::{Harness, SessionFactory, SessionRuntime};
+use moray_session::{AgentRunner, SessionFactory, SessionRuntime};
 
 use crate::{
-    replay_records, SkillCenter, SkillFilterKind, SondaSessionCatalog, SondaSessionError,
-    SondaSessionHarness, SondaSessionTranscripts, SondaSettingsStore,
+    replay_records, SkillCenter, SkillFilterKind, SondaAgentRunner, SondaSessionCatalog,
+    SondaSessionError, SondaSessionTranscripts, SondaSettingsStore,
 };
 
 /// Session-scoped dependencies used when activating a live runtime.
@@ -19,7 +19,7 @@ pub struct SondaSessionFactory {
     skill_center: SkillCenter,
     session_catalog: Arc<SondaSessionCatalog>,
     session_transcripts: Arc<SondaSessionTranscripts>,
-    harness: Arc<SondaSessionHarness>,
+    agent_runner: Arc<SondaAgentRunner>,
 }
 
 impl SondaSessionFactory {
@@ -28,14 +28,14 @@ impl SondaSessionFactory {
         skill_center: SkillCenter,
         session_catalog: Arc<SondaSessionCatalog>,
         session_transcripts: Arc<SondaSessionTranscripts>,
-        harness: Arc<SondaSessionHarness>,
+        agent_runner: Arc<SondaAgentRunner>,
     ) -> Self {
         Self {
             settings_store,
             skill_center,
             session_catalog,
             session_transcripts,
-            harness,
+            agent_runner,
         }
     }
 
@@ -96,14 +96,13 @@ impl SessionFactory for SondaSessionFactory {
         }
 
         let context_engine = self.create_context_engine(session_id)?;
-        let harness: Arc<dyn Harness> = self.harness.clone();
+        let agent_runner: Arc<dyn AgentRunner> = self.agent_runner.clone();
 
         Ok(Arc::new(SessionRuntime::new(
             session_id,
             self.session_transcripts.clone(),
             context_engine,
-            harness,
-            true,
+            agent_runner,
         )))
     }
 }

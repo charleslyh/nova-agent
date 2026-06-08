@@ -7,6 +7,7 @@ publish = false
 description = "Moray Sonda application kit: TOML config and multi-agent assembly"
 
 [dependencies]
+futures = "0.3.31"
 moray-extensions.workspace = true
 moray-channels.workspace = true
 moray-skillhub.workspace = true
