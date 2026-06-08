@@ -77,6 +77,9 @@ impl SkillDirSource {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SkillCatalogEntry {
     pub id: String,
+    /// Directory name under the skills root (matches SkillHub install slug when installed from hub).
+    #[serde(default)]
+    pub slug: String,
     pub description: String,
     /// True when the skill is loaded from a user-writable directory (safe to uninstall).
     #[serde(default)]
@@ -169,7 +172,7 @@ impl SkillCenterInner {
         })?;
         let id = skill.name.clone();
         if self.skills.contains_key(&id) {
-            let entry = catalog_entry(&id, &skill.description, SkillDirKind::User);
+            let entry = catalog_entry(&skill, SkillDirKind::User);
             if let Some(r) = self.skills.get_mut(&id) {
                 r.entry = entry;
                 r.skill = skill;
@@ -279,7 +282,7 @@ impl SkillCenterInner {
 
     fn insert_skill(&mut self, skill: Skill, kind: SkillDirKind) {
         let id = skill.name.clone();
-        let entry = catalog_entry(&id, &skill.description, kind);
+        let entry = catalog_entry(&skill, kind);
         self.order.push(id.clone());
         self.skills.insert(
             id,
@@ -345,10 +348,22 @@ impl SkillCenterInner {
     }
 }
 
-fn catalog_entry(id: &str, description: &str, kind: SkillDirKind) -> SkillCatalogEntry {
+fn skill_dir_slug(skill: &Skill) -> String {
+    skill
+        .location
+        .as_ref()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or(skill.name.as_str())
+        .to_string()
+}
+
+fn catalog_entry(skill: &Skill, kind: SkillDirKind) -> SkillCatalogEntry {
     SkillCatalogEntry {
-        id: id.to_string(),
-        description: description.to_string(),
+        id: skill.name.clone(),
+        slug: skill_dir_slug(skill),
+        description: skill.description.clone(),
         removable: kind == SkillDirKind::User,
     }
 }
@@ -357,6 +372,7 @@ impl Default for SkillCatalogEntry {
     fn default() -> Self {
         Self {
             id: String::new(),
+            slug: String::new(),
             description: String::new(),
             removable: false,
         }

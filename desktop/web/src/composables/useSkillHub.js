@@ -45,9 +45,20 @@ export function useSkillHub(client) {
     }
   }
 
+  function normalizeSkillKey(value) {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_]+/g, "-");
+  }
+
   function isInstalledSlug(slug, installedSkills) {
-    const ids = new Set((installedSkills || []).map((s) => s.id));
-    return ids.has(slug);
+    const hubKey = normalizeSkillKey(slug);
+    if (!hubKey) return false;
+    return (installedSkills || []).some((s) => {
+      const keys = [s.slug, s.id].map(normalizeSkillKey).filter(Boolean);
+      return keys.includes(hubKey);
+    });
   }
 
   async function installFromHub(slug, { force = false, onInstalled } = {}) {

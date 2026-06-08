@@ -187,6 +187,12 @@
                       <button
                         type="button"
                         class="hub-install-btn"
+                        :class="{
+                          'hub-install-btn--installed': isInstalledSlug(
+                            entry.slug,
+                            settingsCatalog.skills
+                          )
+                        }"
                         :disabled="
                           isInstalledSlug(entry.slug, settingsCatalog.skills) ||
                           installingSlug === entry.slug
@@ -375,6 +381,12 @@ watch(selectedNavId, () => {
     closeSkillDetail();
     resetHub();
     skillsSubTab.value = "installed";
+  }
+});
+
+watch(skillsSubTab, (tab) => {
+  if (tab === "hub") {
+    props.refreshSkillsList().catch(() => {});
   }
 });
 
@@ -953,6 +965,13 @@ function closeEdit() {
   cursor: default;
   border-color: #ccc;
   color: #888;
+}
+
+.hub-install-btn--installed:disabled {
+  opacity: 1;
+  border-color: #d0d0d0;
+  background: #f5f5f5;
+  color: #666;
 }
 
 .body-empty {

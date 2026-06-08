@@ -11,10 +11,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-const DEFAULT_SEARCH_URL: &str =
-    "http://lb-3zbg86f6-0gwe3n7q8t4sv2za.clb.gz-tencentclb.com/api/v1/search";
+const DEFAULT_SEARCH_URL: &str = "https://api.skillhub.cn/api/v1/search";
 const DEFAULT_PRIMARY_DOWNLOAD_URL_TEMPLATE: &str =
-    "http://lb-3zbg86f6-0gwe3n7q8t4sv2za.clb.gz-tencentclb.com/api/v1/download?slug={slug}";
+    "https://api.skillhub.cn/api/v1/download?slug={slug}";
 const DEFAULT_DOWNLOAD_URL_TEMPLATE: &str =
     "https://skillhub-1388575217.cos.ap-guangzhou.myqcloud.com/skills/{slug}.zip";
 const DEFAULT_INDEX_URL: &str =
@@ -180,14 +179,26 @@ struct RemoteSearchResponse {
 struct RemoteSearchItem {
     #[serde(default)]
     slug: String,
-    #[serde(default, alias = "displayName")]
+    #[serde(default)]
     name: Option<String>,
+    #[serde(default, rename = "displayName")]
+    display_name: Option<String>,
     #[serde(default)]
     description: Option<String>,
     #[serde(default)]
     summary: Option<String>,
     #[serde(default)]
     version: Option<String>,
+}
+
+impl RemoteSearchItem {
+    fn resolved_name(&self) -> Option<String> {
+        self.display_name
+            .as_ref()
+            .or(self.name.as_ref())
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -399,9 +410,7 @@ async fn remote_search(hub: &SkillHub, query: &str) -> Result<Vec<SkillHubEntry>
         .map(|item| {
             let slug = item.slug.trim().to_string();
             let name = item
-                .name
-                .map(|n| n.trim().to_string())
-                .filter(|n| !n.is_empty())
+                .resolved_name()
                 .unwrap_or_else(|| slug.clone());
             SkillHubEntry {
                 slug,
@@ -581,5 +590,25 @@ mod tests {
     fn new_sets_download_dir() {
         let hub = SkillHub::new("./skills");
         assert_eq!(hub.download_dir(), Path::new("./skills"));
+    }
+
+    #[test]
+    fn remote_search_item_accepts_name_and_display_name() {
+        let raw = r#"{
+            "slug": "git",
+            "name": "Git",
+            "displayName": "Git Display",
+            "description": "desc",
+            "summary": "summary",
+            "version": "1.0.0"
+        }"#;
+        let item: RemoteSearchItem = serde_json::from_str(raw).expect("parse item");
+        assert_eq!(item.resolved_name().as_deref(), Some("Git Display"));
+
+        let response: RemoteSearchResponse = serde_json::from_str(
+            r#"{"results":[{"slug":"git","name":"Git","displayName":"Git Display"}]}"#,
+        )
+        .expect("parse response");
+        assert_eq!(response.results.len(), 1);
     }
 }
