@@ -28,9 +28,7 @@ pub fn replay_records(records: &[SondaSessionEventRecord]) -> SondaSessionSnapsh
                     pending_text.clear();
                     pending_tools.clear();
                 }
-                messages.push(ChatCompletionRequestMessage::User {
-                    content: input.to_user_message_content(),
-                });
+                messages.push(input.to_user_message());
             }
             SessionEventKind::AgentResponse { agent } => {
                 fold_agent_event(

@@ -1,6 +1,5 @@
 use std::mem;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -16,45 +15,85 @@ use moray_core::{
     MorayError,
 };
 
-/// At most one in-flight turn: cancel token, [`oneshot`] completion, and cross-task access.
-#[derive(Clone)]
-struct ActiveTurn {
-    inner: Arc<Mutex<Option<InflightTurn>>>,
-}
-
-struct InflightTurn {
+/// Per-turn signals: cancel token and [`oneshot`] completion.
+struct TurnControl {
     cancel: CancellationToken,
     done_tx: oneshot::Sender<()>,
     done_rx: oneshot::Receiver<()>,
 }
 
-impl ActiveTurn {
+impl TurnControl {
+    fn new() -> (Self, CancellationToken) {
+        let (done_tx, done_rx) = oneshot::channel();
+        let cancel = CancellationToken::new();
+        let cancellation = cancel.clone();
+        (
+            Self {
+                cancel,
+                done_tx,
+                done_rx,
+            },
+            cancellation,
+        )
+    }
+}
+
+/// At most one exclusive session operation (agent turn or reset).
+#[derive(Clone)]
+struct InflightSlot {
+    inner: Arc<Mutex<Option<TurnControl>>>,
+}
+
+/// Holds the inflight slot until dropped (e.g. during [`SessionRuntime::reset`]).
+struct ExclusiveHold {
+    slot: InflightSlot,
+}
+
+impl Drop for ExclusiveHold {
+    fn drop(&mut self) {
+        let _ = self.slot.inner.lock().expect("inflight lock poisoned").take();
+    }
+}
+
+impl InflightSlot {
     fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(None)),
         }
     }
 
-    fn begin(&self) -> CancellationToken {
-        let (done_tx, done_rx) = oneshot::channel();
-        let cancel = CancellationToken::new();
-        let cancellation = cancel.clone();
-        *self.inner.lock().expect("active_turn lock poisoned") = Some(InflightTurn {
-            cancel,
-            done_tx,
-            done_rx,
-        });
-        cancellation
+    fn try_start_turn(&self) -> Result<CancellationToken> {
+        let mut slot = self.inner.lock().expect("inflight lock poisoned");
+        if slot.is_some() {
+            return Err(SessionError::from(MorayError::Busy));
+        }
+
+        let (control, cancellation) = TurnControl::new();
+        *slot = Some(control);
+        Ok(cancellation)
     }
 
-    fn cancel_if_any(&self) {
-        if let Some(turn) = self.inner.lock().expect("active_turn lock poisoned").as_ref() {
+    fn try_hold_exclusive(self) -> Result<ExclusiveHold> {
+        {
+            let mut slot = self.inner.lock().expect("inflight lock poisoned");
+            if slot.is_some() {
+                return Err(SessionError::from(MorayError::Busy));
+            }
+
+            let (control, _) = TurnControl::new();
+            *slot = Some(control);
+        }
+        Ok(ExclusiveHold { slot: self })
+    }
+
+    fn cancel(&self) {
+        if let Some(turn) = self.inner.lock().expect("inflight lock poisoned").as_ref() {
             turn.cancel.cancel();
         }
     }
 
-    async fn wait_done(&self) {
-        let done_rx = self.inner.lock().expect("active_turn lock poisoned").as_mut().map(
+    async fn wait_turn_done(&self) {
+        let done_rx = self.inner.lock().expect("inflight lock poisoned").as_mut().map(
             |turn| {
                 let (stub_tx, stub_rx) = oneshot::channel();
                 let _ = stub_tx;
@@ -66,9 +105,9 @@ impl ActiveTurn {
         }
     }
 
-    /// Drain completion: take the registered turn and signal waiters. No-op if already cleared.
-    fn finish(&self) {
-        if let Some(turn) = self.inner.lock().expect("active_turn lock poisoned").take() {
+    /// Take the registered turn and signal waiters. No-op if already cleared.
+    fn complete_turn(&self) {
+        if let Some(turn) = self.inner.lock().expect("inflight lock poisoned").take() {
             let _ = turn.done_tx.send(());
         }
     }
@@ -86,15 +125,26 @@ pub enum TurnResource {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TurnInput {
-    #[cfg_attr(feature = "serde", serde(alias = "content"))]
     pub text: String,
+
     #[cfg_attr(feature = "serde", serde(default))]
     pub resources: Vec<TurnResource>,
 }
 
 impl TurnInput {
-    /// Format for [`ChatCompletionRequestMessage::User`] ingestion and replay.
-    pub fn to_user_message_content(&self) -> String {
+    /// Projects this turn into the core transcript user message.
+    ///
+    /// Session events keep structured [`TurnInput`] (text plus attachments) for UI and
+    /// replay, while [`ChatCompletionRequestMessage`] is core's flat transcript primitive.
+    /// The mapping lives here so moray-core stays unaware of session payloads, and so live
+    /// ingest and transcript replay (`sonda`) share one encoding path.
+    pub fn to_user_message(&self) -> ChatCompletionRequestMessage {
+        ChatCompletionRequestMessage::User {
+            content: self.user_message_content(),
+        }
+    }
+
+    fn user_message_content(&self) -> String {
         if self.resources.is_empty() {
             return self.text.clone();
         }
@@ -104,6 +154,8 @@ impl TurnInput {
         }
         for resource in &self.resources {
             match resource {
+                // Core's user message is still a single `content` string; mark attachments
+                // inline until we can thread provider-native multimodal parts through core.
                 TurnResource::Image { path } => parts.push(format!("[IMAGE:{path}]")),
             }
         }
@@ -160,8 +212,7 @@ pub struct SessionRuntime {
     event_sink: Arc<dyn SessionEventSink>,
     context: Arc<dyn ContextEngine>,
     harness: Arc<dyn Harness>,
-    active: Arc<AtomicBool>,
-    active_turn: ActiveTurn,
+    inflight: InflightSlot,
 }
 
 fn timestamp_ms() -> u64 {
@@ -179,22 +230,6 @@ fn event_of(session_id: &str, kind: SessionEventKind) -> SessionEvent {
     }
 }
 
-struct ActiveGuard {
-    active: Arc<AtomicBool>,
-}
-
-impl ActiveGuard {
-    fn new(active: Arc<AtomicBool>) -> Self {
-        Self { active }
-    }
-}
-
-impl Drop for ActiveGuard {
-    fn drop(&mut self) {
-        self.active.store(false, Ordering::SeqCst);
-    }
-}
-
 impl SessionRuntime {
     pub fn new(
         session_id: impl Into<String>,
@@ -209,25 +244,30 @@ impl SessionRuntime {
             stream,
             event_sink,
             context,
-            active: Arc::new(AtomicBool::new(false)),
-            active_turn: ActiveTurn::new(),
+            inflight: InflightSlot::new(),
         }
     }
 
     pub async fn submit(&self, input: TurnInput) -> Result<()> {
-        let guard = self.request_active_guard()?;
-        let cancellation = self.active_turn.begin();
+        let cancellation = self.inflight.try_start_turn()?;
 
-        let content = input.to_user_message_content();
+        // Events record the structured turn for UI/audit; the LLM sees only the projected
+        // user message.
+        let user_message = input.to_user_message();
+
         let event = event_of(self.session_id.as_str(), SessionEventKind::TurnAccepted { input });
         self.event_sink.append(&event)?;
 
-        self.context
-            .ingest(vec![ChatCompletionRequestMessage::User { content }])
-            .await?;
+        // The agent loop assembles prompts from ContextEngine, not from TurnInput.
+        // Ingest extends that shared transcript (where preambles/compaction also hook in)
+        // without pulling session types into moray-core.
+        self.context.ingest(vec![user_message]).await?;
 
+        // Sessions outlive settings edits; resolve completion/toolbox from the harness each
+        // turn so model and tool wiring changes apply on the next submit without restart.
         let completion = self.harness.create_completion(self.session_id.as_str())?;
         let toolbox = self.harness.create_toolbox(self.session_id.as_str())?;
+
         let agent_stream = AgentRequestBuilder::new()
             .completion(completion)
             .toolbox(toolbox)
@@ -240,8 +280,7 @@ impl SessionRuntime {
             self.session_id.clone(),
             agent_stream,
             self.event_sink.clone(),
-            self.active_turn.clone(),
-            guard,
+            self.inflight.clone(),
         ));
 
         Ok(())
@@ -249,18 +288,16 @@ impl SessionRuntime {
 
     /// Cancel the in-flight agent run for the current turn, if any. Idempotent when idle.
     pub fn cancel(&self) -> Result<()> {
-        self.active_turn.cancel_if_any();
+        self.inflight.cancel();
         Ok(())
     }
 
     /// Reset the session working state and emit a [`SessionEventKind::Reset`] event.
     pub async fn reset(&self) -> Result<()> {
-        if self.active.load(Ordering::SeqCst) {
-            self.active_turn.cancel_if_any();
-            self.active_turn.wait_done().await;
-        }
+        self.inflight.cancel();
+        self.inflight.wait_turn_done().await;
 
-        let _guard = self.request_active_guard()?;
+        let _guard = self.inflight.clone().try_hold_exclusive()?;
 
         self.event_sink.append(&event_of(
             self.session_id.as_str(),
@@ -276,8 +313,7 @@ impl SessionRuntime {
         session_id: String,
         mut agent_stream: Pin<Box<dyn Stream<Item = AgentResponseEvent> + Send>>,
         store: Arc<dyn SessionEventSink>,
-        active_turn: ActiveTurn,
-        _guard: ActiveGuard,
+        inflight: InflightSlot,
     ) {
         while let Some(agent_ev) = agent_stream.next().await {
             let e = event_of(
@@ -293,14 +329,6 @@ impl SessionRuntime {
         let finish = event_of(session_id.as_str(), SessionEventKind::TurnFinish);
         let _ = store.append(&finish);
 
-        active_turn.finish();
-    }
-
-    fn request_active_guard(&self) -> Result<ActiveGuard> {
-        self.active
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .map_err(|_| SessionError::from(MorayError::Busy))?;
-
-        Ok(ActiveGuard::new(self.active.clone()))
+        inflight.complete_turn();
     }
 }

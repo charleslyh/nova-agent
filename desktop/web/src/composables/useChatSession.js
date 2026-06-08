@@ -393,7 +393,7 @@ export function useChatSession() {
       finishThinkChunkStream();
       clearToolCardState();
       clearThinkCardState();
-      push("user", event.kind.input?.text ?? event.kind.input?.content ?? "", {
+      push("user", event.kind.input?.text ?? "", {
         resources: normalizeTurnResources(event.kind.input?.resources)
       });
     } else if (kind === "reset") {
