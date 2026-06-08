@@ -19,16 +19,13 @@ export function useSkillHub(client) {
 
   function scheduleHubSearch(query) {
     if (searchTimer) clearTimeout(searchTimer);
-    const trimmed = query.trim();
-    if (!trimmed) {
-      hubResults.value = [];
-      hubLoading.value = false;
-      hubError.value = "";
-      return;
-    }
     searchTimer = setTimeout(() => {
-      runHubSearch(trimmed);
-    }, 300);
+      runHubSearch(query.trim());
+    }, query.trim() ? 300 : 0);
+  }
+
+  async function loadHubRecommendations() {
+    return runHubSearch("");
   }
 
   async function runHubSearch(query) {
@@ -96,6 +93,7 @@ export function useSkillHub(client) {
     installingSlug,
     scheduleHubSearch,
     runHubSearch,
+    loadHubRecommendations,
     isInstalledSlug,
     installFromHub,
     resetHub,

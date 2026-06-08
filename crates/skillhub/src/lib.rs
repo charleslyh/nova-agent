@@ -210,17 +210,15 @@ struct SkillsIndex {
 async fn search(hub: &SkillHub, query: &str) -> Result<SearchResult> {
     let query = query.trim().to_lowercase();
 
-    if !query.is_empty() {
-        match remote_search(hub, &query).await {
-            Ok(entries) => {
-                return Ok(SearchResult {
-                    entries,
-                    from_remote: true,
-                });
-            }
-            Err(err) => {
-                tracing::debug!("remote search failed, falling back to index: {err}");
-            }
+    match remote_search(hub, &query).await {
+        Ok(entries) => {
+            return Ok(SearchResult {
+                entries,
+                from_remote: true,
+            });
+        }
+        Err(err) => {
+            tracing::debug!("remote search failed, falling back to index: {err}");
         }
     }
 
@@ -386,17 +384,22 @@ fn fill_slug_template(template: &str, slug: &str) -> String {
     }
 }
 
+fn build_search_url(search_url: &str, query: &str, limit: u32) -> String {
+    if query.is_empty() {
+        format!("{search_url}?limit={limit}")
+    } else {
+        let encoded_query = urlencoding::encode(query);
+        format!("{search_url}?q={encoded_query}&limit={limit}")
+    }
+}
+
 async fn remote_search(hub: &SkillHub, query: &str) -> Result<Vec<SkillHubEntry>> {
     let search_url = hub.search_url.trim();
     if search_url.is_empty() {
         return Err(SkillHubError::EmptySearchUrl);
     }
 
-    let encoded_query = urlencoding::encode(query);
-    let full_url = format!(
-        "{}?q={}&limit={}",
-        search_url, encoded_query, hub.search_limit
-    );
+    let full_url = build_search_url(search_url, query, hub.search_limit);
 
     let body = fetch_text(&full_url, hub.search_timeout_secs).await?;
 
@@ -590,6 +593,18 @@ mod tests {
     fn new_sets_download_dir() {
         let hub = SkillHub::new("./skills");
         assert_eq!(hub.download_dir(), Path::new("./skills"));
+    }
+
+    #[test]
+    fn build_search_url_omits_q_for_recommendations() {
+        assert_eq!(
+            build_search_url("https://api.skillhub.cn/api/v1/search", "", 20),
+            "https://api.skillhub.cn/api/v1/search?limit=20"
+        );
+        assert_eq!(
+            build_search_url("https://api.skillhub.cn/api/v1/search", "git", 20),
+            "https://api.skillhub.cn/api/v1/search?q=git&limit=20"
+        );
     }
 
     #[test]

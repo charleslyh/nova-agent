@@ -69,13 +69,7 @@ async fn skills_search(
     State(sonda): State<Arc<Sonda>>,
     Query(params): Query<SkillsSearchQuery>,
 ) -> impl IntoResponse {
-    let q = match params.q.as_deref() {
-        Some(q) if !q.trim().is_empty() => q.trim().to_string(),
-        _ => {
-            return response_with(StatusCode::BAD_REQUEST, "query parameter 'q' is required")
-                .into_response();
-        }
-    };
+    let q = params.q.as_deref().unwrap_or("").trim().to_string();
 
     match sonda.skill_hub.search(&q).await {
         Ok(result) => Json(SkillsSearchRes {

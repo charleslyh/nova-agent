@@ -124,8 +124,11 @@ export async function createHttpChatClient() {
     },
 
     async searchSkillHub(query) {
-      const q = encodeURIComponent(query);
-      return request(`${baseUrl}/skills/search?q=${q}`, { method: "GET" });
+      const trimmed = String(query ?? "").trim();
+      const url = trimmed
+        ? `${baseUrl}/skills/search?q=${encodeURIComponent(trimmed)}`
+        : `${baseUrl}/skills/search`;
+      return request(url, { method: "GET" });
     },
 
     async installSkill(slug, { force = false } = {}) {

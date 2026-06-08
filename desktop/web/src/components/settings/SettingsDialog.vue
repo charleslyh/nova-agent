@@ -167,17 +167,17 @@
                     />
                   </div>
                   <p v-if="hubError" class="error hub-error">{{ hubError }}</p>
-                  <p v-else-if="hubLoading" class="body-empty">搜索中…</p>
+                  <p v-else-if="hubLoading" class="body-empty">加载中…</p>
                   <p
                     v-else-if="hubQuery.trim() && !hubResults.length"
                     class="body-empty"
                   >
                     无匹配结果
                   </p>
-                  <p v-else-if="!hubQuery.trim()" class="body-empty">
-                    输入关键词搜索 Skill Hub
-                  </p>
-                  <ul v-else class="hub-list" role="list">
+                  <p v-else-if="!hubResults.length" class="body-empty">暂无推荐</p>
+                  <template v-else>
+                    <p v-if="!hubQuery.trim()" class="hub-section-label">推荐</p>
+                    <ul class="hub-list" role="list">
                     <li v-for="entry in hubResults" :key="entry.slug" class="hub-item">
                       <div class="hub-item-main">
                         <span class="hub-item-name">{{ entry.name || entry.slug }}</span>
@@ -208,7 +208,8 @@
                         }}
                       </button>
                     </li>
-                  </ul>
+                    </ul>
+                  </template>
                 </div>
               </template>
             </div>
@@ -317,6 +318,7 @@ const {
   hubError,
   installingSlug,
   scheduleHubSearch,
+  loadHubRecommendations,
   installFromHub,
   resetHub,
   isInstalledSlug
@@ -387,6 +389,7 @@ watch(selectedNavId, () => {
 watch(skillsSubTab, (tab) => {
   if (tab === "hub") {
     props.refreshSkillsList().catch(() => {});
+    loadHubRecommendations().catch(() => {});
   }
 });
 
@@ -939,6 +942,13 @@ function closeEdit() {
 .hub-item-version {
   margin-left: 8px;
   font-size: 12px;
+  color: #888;
+}
+
+.hub-section-label {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
   color: #888;
 }
 
