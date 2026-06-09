@@ -452,7 +452,7 @@ mod tests {
     use crate::sonda::SondaBuilder;
     use moray_skillhub::SkillHub;
     use crate::skill_center::{SkillCenter, SkillDirKind, SkillDirSource};
-    use crate::runner::{SondaAgentRunner, SondaToolRegistration};
+    use crate::agent_runner::{SondaAgentRunner, SondaToolRegistration};
     use crate::SondaToolCatalog;
     use moray_extensions::tools::{
         CalcTool, FileReadTool, FileWriteTool, ImageCreateTool, ImageEditTool, ShellTool,
