@@ -20,4 +20,9 @@ pub trait ContextEngine: Send + Sync {
     async fn teardown(&self) -> Result<(), MorayError>;
 
     async fn clear(&self) -> Result<(), MorayError>;
+
+    /// Returns a copy of ingested transcript messages when supported.
+    fn snapshot(&self) -> Option<Vec<ChatCompletionRequestMessage>> {
+        None
+    }
 }

@@ -133,8 +133,7 @@ label = "AI 图片编辑"
 description = """
 Edit an existing image: style transfer, image-to-image, and other modifications from a natural-language instruction.
 Use only when the user wants to change an existing image (not text-to-image generation or image understanding).
-Requires prompt and image_uri (HTTPS URL with full signature params, or a local/session-relative file path).
-"""
+Requires prompt and image_uri (HTTPS URL with full signature params, or a local/session-relative file path)."""
 parameters = """
 {
   "type": "object",

@@ -38,38 +38,46 @@
               class="msg-row"
               :class="`msg-row--${item.role === 'tool' || item.role === 'think' || item.role === 'error' ? 'assistant' : item.role}`"
             >
-              <ToolCallCard
-                v-if="item.role === 'tool'"
-                :item="item"
-                :expanded="isExpanded(item.id)"
-                :read-only="readOnly"
-                :read-only-hint="readOnlyHint"
-                @toggle="toggleToolCard(item.id)"
-                @approve="handleToolAuthApprove"
-                @deny="handleToolAuthDeny"
-              />
-              <ThinkCard
-                v-else-if="item.role === 'think'"
-                :item="item"
-                :expanded="isThinkExpanded(item.id)"
-                @toggle="toggleThinkCard(item.id)"
-              />
-              <div
-                v-else-if="item.role === 'error'"
-                class="system-error-line"
-                role="alert"
-                aria-live="polite"
-              >
-                <span class="system-error-line__label">失败</span>
-                <span class="system-error-line__content">
-                  {{ item.text }}
-                </span>
+              <div class="msg-row-body">
+                <span
+                  v-if="isAssistantSideItem(item) && agentBadgeLabel(item)"
+                  class="agent-badge"
+                  :class="{ 'agent-badge--sub': item.agentRole === 'sub' }"
+                  :title="item.agentId"
+                >{{ agentBadgeLabel(item) }}</span>
+                <ToolCallCard
+                  v-if="item.role === 'tool'"
+                  :item="item"
+                  :expanded="isExpanded(item.id)"
+                  :read-only="readOnly"
+                  :read-only-hint="readOnlyHint"
+                  @toggle="toggleToolCard(item.id)"
+                  @approve="handleToolAuthApprove"
+                  @deny="handleToolAuthDeny"
+                />
+                <ThinkCard
+                  v-else-if="item.role === 'think'"
+                  :item="item"
+                  :expanded="isThinkExpanded(item.id)"
+                  @toggle="toggleThinkCard(item.id)"
+                />
+                <div
+                  v-else-if="item.role === 'error'"
+                  class="system-error-line"
+                  role="alert"
+                  aria-live="polite"
+                >
+                  <span class="system-error-line__label">失败</span>
+                  <span class="system-error-line__content">
+                    {{ item.text }}
+                  </span>
+                </div>
+                <div
+                  v-else-if="hasVisibleAssistantText(item.text)"
+                  class="text text--assistant markdown-body"
+                  v-html="renderAssistantMarkdown(item.text, { sessionDir: props.sessionDir })"
+                />
               </div>
-              <div
-                v-else-if="hasVisibleAssistantText(item.text)"
-                class="text text--assistant markdown-body"
-                v-html="renderAssistantMarkdown(item.text, { sessionDir: props.sessionDir })"
-              />
             </div>
           </template>
         </div>
@@ -115,6 +123,10 @@ const props = defineProps({
   readOnlyHint: {
     type: String,
     default: "IM"
+  },
+  agents: {
+    type: Array,
+    default: () => []
   }
 });
 const emit = defineEmits(["tool-auth-approve", "tool-auth-deny"]);
@@ -128,6 +140,16 @@ const manualPinnedThinkId = ref(null);
 const lastActiveStreamingThinkId = ref(null);
 function hasVisibleAssistantText(text) {
   return typeof text === "string" && text.trim().length > 0;
+}
+
+function isAssistantSideItem(item) {
+  return item?.role === "assistant" || item?.role === "tool" || item?.role === "think";
+}
+
+function agentBadgeLabel(item) {
+  if (!item?.agentId) return null;
+  const agent = props.agents.find((a) => a.id === item.agentId);
+  return agent?.name || item.agentId;
 }
 
 function hasUserText(user) {
@@ -149,6 +171,9 @@ function userImageResources(user) {
 
 function shouldShowStreamItem(item) {
   if (!item || typeof item.role !== "string") {
+    return false;
+  }
+  if (item.role === "assistant" && item.agentRole === "sub") {
     return false;
   }
   if (item.role === "tool" || item.role === "think") {
@@ -335,9 +360,10 @@ watch(
 }
 
 .stream-inner {
+  --agent-badge-gutter: 96px;
   width: min(100%, 920px);
   margin: 0 auto;
-  padding: 0 16px;
+  padding: 0 16px 0 calc(16px + var(--agent-badge-gutter));
   box-sizing: border-box;
 }
 
@@ -376,17 +402,50 @@ watch(
   margin-bottom: 6px;
 }
 
-.turn-content {
-  display: flex;
-  flex-direction: column;
-}
-
 .msg-row--user {
   justify-content: flex-end;
 }
 
 .msg-row--assistant {
   justify-content: flex-start;
+}
+
+.msg-row-body {
+  position: relative;
+  width: min(72%, 760px);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.msg-row-body > .agent-badge {
+  position: absolute;
+  top: 6px;
+  right: calc(100% + 8px);
+  max-width: var(--agent-badge-gutter, 96px);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #5c5c62;
+  background: #f0f0f2;
+  border: 1px solid #e4e4e8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.turn-content {
+  display: flex;
+  flex-direction: column;
+  margin-left: calc(-1 * var(--agent-badge-gutter));
+}
+
+.agent-badge--sub {
+  color: #6b4f1d;
+  background: #fff6e8;
+  border-color: #f0ddb8;
 }
 
 .bubble {
@@ -438,11 +497,15 @@ watch(
 }
 
 .text {
-  width: min(72%, 760px);
-  max-width: 100%;
+  width: 100%;
   min-width: 0;
   font-size: 15px;
   line-height: 1.6;
+}
+
+.msg-row-body :deep(.card),
+.msg-row-body :deep(.think-card) {
+  width: 100%;
 }
 
 .text--assistant {
@@ -450,8 +513,7 @@ watch(
 }
 
 .system-error-line {
-  width: min(72%, 760px);
-  max-width: 100%;
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;

@@ -11,5 +11,6 @@ pub use error::{Result, SessionError};
 pub use factory::SessionFactory;
 pub use live::LiveSessions;
 pub use runtime::{
-    SessionEvent, SessionEventKind, SessionEventSink, SessionRuntime, TurnInput, TurnResource,
+    AgentRole, SessionAgentResponse, SessionEvent, SessionEventKind, SessionEventSink,
+    SessionRuntime, TurnInput, TurnResource,
 };

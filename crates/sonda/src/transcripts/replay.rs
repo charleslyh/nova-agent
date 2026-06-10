@@ -5,7 +5,7 @@ use moray_core::{
     ChatCompletionResponseChunk, ToolCallEventKind, ToolCallRequest,
     ToolCallStatus,
 };
-use moray_session::SessionEventKind;
+use moray_session::{AgentRole, SessionEventKind};
 use std::collections::HashMap;
 
 use super::SondaSessionEventRecord;
@@ -30,9 +30,12 @@ pub fn replay_records(records: &[SondaSessionEventRecord]) -> SondaSessionSnapsh
                 }
                 messages.push(input.to_user_message());
             }
-            SessionEventKind::AgentResponse { agent } => {
+            SessionEventKind::AgentResponse(chunk) => {
+                if chunk.role == AgentRole::Sub {
+                    continue;
+                }
                 fold_agent_event(
-                    agent,
+                    &chunk.event,
                     &mut messages,
                     &mut pending_text,
                     &mut pending_tools,
@@ -155,7 +158,7 @@ fn fold_agent_event(
 mod tests {
     use super::*;
     use moray_core::{AgentFinishKind, ToolCallEvent, ToolCallStatus};
-    use moray_session::{SessionEvent, SessionEventKind, TurnInput};
+    use moray_session::{AgentRole, SessionAgentResponse, SessionEvent, SessionEventKind, TurnInput};
 
     fn record(seq: u64, kind: SessionEventKind) -> SondaSessionEventRecord {
         SondaSessionEventRecord {
@@ -181,7 +184,14 @@ mod tests {
     }
 
     fn agent(seq: u64, agent: AgentResponseEvent) -> SondaSessionEventRecord {
-        record(seq, SessionEventKind::AgentResponse { agent })
+        record(
+            seq,
+            SessionEventKind::AgentResponse(SessionAgentResponse {
+                agent_id: "leader".into(),
+                role: AgentRole::Leader,
+                event: agent,
+            }),
+        )
     }
 
     fn tb(s: &str) -> AgentResponseEvent {

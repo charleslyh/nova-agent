@@ -20,6 +20,10 @@ export function createChatClient(impl) {
     getTools: impl.getTools,
     getSessionAgent: impl.getSessionAgent,
     setSessionAgent: impl.setSessionAgent,
+    getSessionAgents: impl.getSessionAgents,
+    setSessionAgents: impl.setSessionAgents,
+    createAgent: impl.createAgent,
+    deleteAgent: impl.deleteAgent,
     getSessionWorkspace: impl.getSessionWorkspace,
     getSessionWorkspacePath: impl.getSessionWorkspacePath,
     updateAgent: impl.updateAgent,
@@ -161,6 +165,40 @@ export async function createHttpChatClient() {
       });
     },
 
+    async getSessionAgents(sessionId) {
+      const sid = encodeURIComponent(sessionId);
+      return request(`${baseUrl}/sessions/${sid}/agents`, { method: "GET" });
+    },
+
+    async setSessionAgents(sessionId, { leader_agent_id: leaderAgentId, sub_agents: subAgents }) {
+      const sid = encodeURIComponent(sessionId);
+      await request(`${baseUrl}/sessions/${sid}/agents`, {
+        method: "PUT",
+        body: JSON.stringify({
+          leader_agent_id: leaderAgentId,
+          sub_agents: subAgents ?? []
+        })
+      });
+    },
+
+    async createAgent({ name, completion_id: completionId, allowed_tools: allowedTools, character, desc }) {
+      return request(`${baseUrl}/settings/agents`, {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          completion_id: completionId,
+          allowed_tools: allowedTools ?? [],
+          character: character ?? null,
+          desc: desc ?? null
+        })
+      });
+    },
+
+    async deleteAgent(agentId) {
+      const aid = encodeURIComponent(agentId);
+      await request(`${baseUrl}/settings/agents/${aid}`, { method: "DELETE" });
+    },
+
     async getSessionWorkspace(sessionId) {
       const sid = encodeURIComponent(sessionId);
       return request(`${baseUrl}/sessions/${sid}/workspace`, { method: "GET" });
@@ -171,7 +209,7 @@ export async function createHttpChatClient() {
       return request(`${baseUrl}/sessions/${sid}/workspace/path`, { method: "GET" });
     },
 
-    async updateAgent(agentId, { name, completion_id: completionId, allowed_tools: allowedTools, character }) {
+    async updateAgent(agentId, { name, completion_id: completionId, allowed_tools: allowedTools, character, desc }) {
       const aid = encodeURIComponent(agentId);
       await request(`${baseUrl}/settings/agents/${aid}`, {
         method: "PATCH",
@@ -179,7 +217,8 @@ export async function createHttpChatClient() {
           name,
           completion_id: completionId,
           allowed_tools: allowedTools ?? [],
-          character: character ?? null
+          character: character ?? null,
+          desc: desc ?? null
         })
       });
     },

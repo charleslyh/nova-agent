@@ -41,6 +41,32 @@ pub struct SondaSessionCatalog {
     data: RwLock<SessionsData>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SubAgentContextMode {
+    Isolated,
+    Branch,
+}
+
+impl Default for SubAgentContextMode {
+    fn default() -> Self {
+        Self::Isolated
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SessionSubAgentEntry {
+    pub agent_id: String,
+    #[serde(default)]
+    pub context_mode: SubAgentContextMode,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SessionAgentsConfig {
+    pub leader_agent_id: String,
+    pub sub_agents: Vec<SessionSubAgentEntry>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SessionCatalogEntry {
     pub session_id: String,
@@ -49,6 +75,8 @@ pub struct SessionCatalogEntry {
     pub name: String,
     #[serde(default)]
     pub agent_id: Option<String>,
+    #[serde(default)]
+    pub sub_agents: Vec<SessionSubAgentEntry>,
 }
 
 /// First 16 Unicode scalar values of trimmed `input` (used as session display name).
@@ -98,6 +126,7 @@ impl SondaSessionCatalog {
             session_id,
             name: name.clone(),
             agent_id: None,
+            sub_agents: Vec::new(),
         };
         inner.entries.push(new_entry);
         if let Err(err) = save_locked(self, &inner) {
@@ -134,6 +163,61 @@ impl SondaSessionCatalog {
     /// Updates `[[entries]]` for `session_id` and persists `sessions.toml`.
     ///
     /// Caller must ensure `agent_id` references a valid agent in `server.toml` when applicable.
+    pub fn get_session_sub_agents(&self, session_id: &str) -> Result<Vec<SessionSubAgentEntry>> {
+        ensure_session_row(self, session_id)?;
+        let inner = self.data.read();
+        Ok(inner
+            .entries
+            .iter()
+            .find(|e| e.session_id == session_id)
+            .map(|e| e.sub_agents.clone())
+            .unwrap_or_default())
+    }
+
+    pub fn get_session_agents(&self, session_id: &str) -> Result<SessionAgentsConfig> {
+        Ok(SessionAgentsConfig {
+            leader_agent_id: self.get_session_agent_id(session_id)?,
+            sub_agents: self.get_session_sub_agents(session_id)?,
+        })
+    }
+
+    pub fn set_session_agents(
+        &self,
+        session_id: &str,
+        leader_agent_id: &str,
+        sub_agents: Vec<SessionSubAgentEntry>,
+    ) -> Result<()> {
+        let session_id = require_nonempty_trimmed(session_id, "session_id")?;
+        let leader_agent_id = require_nonempty_trimmed(leader_agent_id, "leader_agent_id")?;
+        validate_sub_agents(&sub_agents)?;
+
+        let mut inner = self.data.write();
+        let default_agent_id = inner.default_agent_id.clone();
+        let index = inner
+            .entries
+            .iter()
+            .position(|e| e.session_id == session_id)
+            .ok_or_else(|| {
+                MissingReference::new(format!("no [[entries]] row for session_id `{session_id}`"))
+            })?;
+        let previous_agent_id = inner.entries[index].agent_id.clone();
+        let previous_sub_agents = inner.entries[index].sub_agents.clone();
+
+        if leader_agent_id == default_agent_id {
+            inner.entries[index].agent_id = None;
+        } else {
+            inner.entries[index].agent_id = Some(leader_agent_id);
+        }
+        inner.entries[index].sub_agents = sub_agents;
+
+        if let Err(err) = save_locked(self, &inner) {
+            inner.entries[index].agent_id = previous_agent_id;
+            inner.entries[index].sub_agents = previous_sub_agents;
+            return Err(err);
+        }
+        Ok(())
+    }
+
     pub fn set_session_agent_id(
         &self,
         session_id: &str,
@@ -195,10 +279,12 @@ fn validate_data(inner: SessionsData) -> Result<SessionsData> {
             None => None,
             Some(s) => Some(require_nonempty_trimmed(&s, "entries.agent_id")?),
         };
+        let sub_agents = validate_sub_agents(&e.sub_agents)?;
         entries.push(SessionCatalogEntry {
             session_id,
             name,
             agent_id,
+            sub_agents,
         });
     }
 
@@ -240,6 +326,24 @@ fn save_locked(catalog: &SondaSessionCatalog, inner: &SessionsData) -> Result<()
     std::fs::write(path, s)
         .map_err(|source| FileIoError::new("write", path.to_path_buf(), source))?;
     Ok(())
+}
+
+fn validate_sub_agents(sub_agents: &[SessionSubAgentEntry]) -> Result<Vec<SessionSubAgentEntry>> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for entry in sub_agents {
+        let agent_id = require_nonempty_trimmed(&entry.agent_id, "sub_agents.agent_id")?;
+        if !seen.insert(agent_id.clone()) {
+            return Err(
+                InvalidContent::new(format!("duplicate sub_agents agent_id `{agent_id}`")).into(),
+            );
+        }
+        out.push(SessionSubAgentEntry {
+            agent_id,
+            context_mode: entry.context_mode.clone(),
+        });
+    }
+    Ok(out)
 }
 
 fn ensure_session_row(catalog: &SondaSessionCatalog, session_id: &str) -> Result<()> {

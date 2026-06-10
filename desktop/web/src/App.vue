@@ -18,14 +18,10 @@
     >
       <div class="chat-main">
         <AppTitlebar
-          :agents="settingsCatalog.agents"
-          :current-agent-id="currentAgentId"
-          :show-agent-select="settingsCatalog.agents.length > 0"
           :show-actions="!isWelcome()"
           :show-channel-settings="!!activeChannelSessionIdForSettings"
           :show-session-detail="!!activeSessionId"
           :session-detail-open="drawerOpen"
-          @select-agent="onSelectComposerAgent"
           @reset="onResetSession"
           @open-channel-settings="openChannelSettings"
           @toggle-session-detail="toggleDrawer"
@@ -48,6 +44,7 @@
             :messages="transcript"
             :status="status"
             :session-dir="sessionWorkspaceDir"
+            :agents="settingsCatalog.agents"
             :read-only="isChannelSession"
             read-only-hint="IM 频道"
             @tool-auth-approve="replyToolAuth($event, true)"
@@ -78,7 +75,10 @@
           :session-id="activeSessionId"
           :open="drawerOpen"
           :status="status"
+          :agents="settingsCatalog.agents"
           :fetch-workspace="getSessionWorkspace"
+          :get-session-agents="getSessionAgentsConfig"
+          :save-session-agents="saveSessionAgentsConfig"
         />
       </div>
     </div>
@@ -88,6 +88,8 @@
       :settings-catalog="settingsCatalog"
       :available-tools="availableTools"
       :save-agent="saveAgentFromSettings"
+      :create-agent="createAgentFromSettings"
+      :delete-agent="deleteAgentFromSettings"
       :get-skill-detail="getSkillDetail"
       :search-skill-hub="searchSkillHub"
       :install-skill="installSkill"
@@ -193,11 +195,13 @@ const {
   settingsOpen,
   settingsCatalog,
   availableTools,
-  currentAgentId,
   openSettings,
   closeSettings,
-  selectComposerAgent,
   saveAgentFromSettings,
+  createAgentFromSettings,
+  deleteAgentFromSettings,
+  getSessionAgentsConfig,
+  saveSessionAgentsConfig,
   getSkillDetail,
   searchSkillHub,
   installSkill,
@@ -224,14 +228,6 @@ const {
 } = useChatSession();
 
 const { drawerOpen, toggleDrawer } = useSessionDetailDrawer();
-
-async function onSelectComposerAgent(agentId) {
-  try {
-    await selectComposerAgent(agentId);
-  } catch (e) {
-    console.error(e);
-  }
-}
 
 async function onSelectSession(sessionId) {
   try {

@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::time::Instant;
 
 use async_openai::config::OpenAIConfig;
 use async_openai::types::chat::{
@@ -17,9 +18,9 @@ use async_openai::types::chat::{
     ChatCompletionRequestToolMessageContent as AoRequestToolMessageContent,
     ChatCompletionRequestUserMessage as AoRequestUserMessage,
     ChatCompletionRequestUserMessageContent as AoRequestUserMessageContent,
-    ChatCompletionTool as AoTool, ChatCompletionTools as AoTools,
-    CreateChatCompletionRequest as AoCreateRequest, FinishReason as AoFinishReason, FunctionCall,
-    FunctionObject,
+    ChatCompletionStreamOptions, ChatCompletionTool as AoTool, ChatCompletionTools as AoTools,
+    CompletionUsage, CreateChatCompletionRequest as AoCreateRequest, FinishReason as AoFinishReason,
+    FunctionCall, FunctionObject,
 };
 use async_openai::Client;
 use async_trait::async_trait;
@@ -29,7 +30,10 @@ use moray_core::{
     ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,
     ChatCompletionResponseChunk, MorayError, ToolCallRequest, ToolManifest,
 };
+use serde::Serialize;
 use tracing::{debug, info, instrument, warn};
+
+const PROTOCOL_LOG_LIMIT: usize = 32_768;
 
 /// OpenAI-compatible HTTP endpoint and model id for [`OpenAIChatCompletion`].
 #[derive(Clone, Debug)]
@@ -55,20 +59,29 @@ impl Endpoint {
 
 pub struct OpenAIChatCompletion {
     client: Client<OpenAIConfig>,
+    api_base: String,
     model: String,
 }
 
 impl OpenAIChatCompletion {
     pub fn new(endpoint: Endpoint) -> Self {
+        let api_base = endpoint.api_base.clone();
         let cfg = OpenAIConfig::new()
             .with_api_key(endpoint.api_key)
-            .with_api_base(endpoint.api_base);
-        Self::from_config(cfg, endpoint.model)
+            .with_api_base(api_base.clone());
+        Self {
+            client: Client::with_config(cfg),
+            api_base,
+            model: endpoint.model,
+        }
     }
 
     pub fn from_config(cfg: OpenAIConfig, model: impl Into<String>) -> Self {
+        use async_openai::config::Config;
+
         Self {
-            client: Client::with_config(cfg),
+            client: Client::with_config(cfg.clone()),
+            api_base: cfg.api_base().to_string(),
             model: model.into(),
         }
     }
@@ -125,6 +138,82 @@ fn to_request_messages(msgs: &[ChatCompletionRequestMessage]) -> Vec<AoRequestMe
             }),
         })
         .collect()
+}
+
+#[derive(Default)]
+struct MessageRoleCounts {
+    system: usize,
+    user: usize,
+    assistant: usize,
+    tool: usize,
+}
+
+#[derive(Default, Serialize)]
+struct LlmToolCallProtocol {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+#[derive(Default, Serialize)]
+struct LlmResponseProtocol {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completion_id: Option<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refusal: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tool_calls: Vec<LlmToolCallProtocol>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    finish_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<CompletionUsage>,
+    chunk_count: usize,
+}
+
+fn protocol_json(value: &impl Serialize) -> String {
+    protocol_json_with_limit(value, PROTOCOL_LOG_LIMIT)
+}
+
+fn protocol_json_with_limit(value: &impl Serialize, limit: usize) -> String {
+    match serde_json::to_string(value) {
+        Ok(json) => truncate_protocol_payload(&json, limit),
+        Err(error) => format!("<serialize error: {error}>"),
+    }
+}
+
+fn truncate_protocol_payload(payload: &str, limit: usize) -> String {
+    if payload.len() <= limit {
+        return payload.to_string();
+    }
+    let total = payload.len();
+    format!(
+        "{}... [truncated, total {total} bytes]",
+        &payload[..limit]
+    )
+}
+
+fn log_llm_request_protocol(model: &str, api_base: &str, wire_request: &AoCreateRequest) {
+    debug!(
+        model = %model,
+        api_base = %api_base,
+        request = %protocol_json(wire_request),
+        "llm request protocol"
+    );
+}
+
+fn count_message_roles(messages: &[ChatCompletionRequestMessage]) -> MessageRoleCounts {
+    let mut counts = MessageRoleCounts::default();
+    for message in messages {
+        match message {
+            ChatCompletionRequestMessage::System { .. } => counts.system += 1,
+            ChatCompletionRequestMessage::User { .. } => counts.user += 1,
+            ChatCompletionRequestMessage::Assistant { .. } => counts.assistant += 1,
+            ChatCompletionRequestMessage::Tool { .. } => counts.tool += 1,
+        }
+    }
+    counts
 }
 
 fn map_tools(tools: &[ToolManifest]) -> Option<Vec<AoTools>> {
@@ -286,45 +375,111 @@ impl ChatCompletion for OpenAIChatCompletion {
         Pin<Box<dyn Stream<Item = Result<ChatCompletionResponseChunk, MorayError>> + Send>>,
         MorayError,
     > {
-        info!(
-            model = %self.model,
-            message_count = messages.len(),
-            tool_count = tools.len(),
-            stream = stream,
-            "started"
-        );
+        let roles = count_message_roles(messages);
+        let tool_names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
 
         let req = AoCreateRequest {
             model: self.model.clone(),
             messages: to_request_messages(messages),
             stream: Some(stream),
+            stream_options: stream.then_some(ChatCompletionStreamOptions {
+                include_usage: Some(true),
+                include_obfuscation: None,
+            }),
             tools: map_tools(tools),
             ..Default::default()
         };
 
+        info!(
+            model = %self.model,
+            api_base = %self.api_base,
+            message_count = messages.len(),
+            system_messages = roles.system,
+            user_messages = roles.user,
+            assistant_messages = roles.assistant,
+            tool_messages = roles.tool,
+            tool_count = tools.len(),
+            tools = %tool_names.join(","),
+            stream = stream,
+            "llm request"
+        );
+        log_llm_request_protocol(self.model.as_str(), self.api_base.as_str(), &req);
+
+        let started_at = Instant::now();
+        let connect_started = Instant::now();
         let mut upstream = self.client.chat().create_stream(req).await.map_err(|e| {
-            warn!(error = %e, "create stream failed");
+            warn!(
+                model = %self.model,
+                api_base = %self.api_base,
+                elapsed_ms = connect_started.elapsed().as_millis() as u64,
+                error = %e,
+                "llm request failed"
+            );
             MorayError::Message(e.to_string())
         })?;
+        let connect_ms = connect_started.elapsed().as_millis() as u64;
+        info!(
+            model = %self.model,
+            connect_ms,
+            "llm stream connected"
+        );
 
+        let model = self.model.clone();
         let out = async_stream::stream! {
             let mut tool_buf: HashMap<u32, (String, String, String)> = HashMap::new();
             let mut refusal_buf = String::new();
             let mut saw_any_text = false;
             let mut think_parser = ThinkTagStreamParser::new();
+            let mut completion_id: Option<String> = None;
+            let mut first_chunk_ms: Option<u64> = None;
+            let mut text_chars = 0usize;
+            let mut usage: Option<CompletionUsage> = None;
+            let mut wire_content = String::new();
+            let mut chunk_count = 0usize;
 
             while let Some(item) = upstream.next().await {
                 let resp = match item {
                     Ok(r) => r,
                     Err(e) => {
-                        warn!(error = %e, "stream item error");
+                        warn!(
+                            model = %model,
+                            completion_id = completion_id.as_deref().unwrap_or(""),
+                            elapsed_ms = started_at.elapsed().as_millis() as u64,
+                            error = %e,
+                            "llm stream error"
+                        );
                         yield Err(MorayError::Message(e.to_string()));
                         return;
                     }
                 };
 
+                if completion_id.is_none() {
+                    completion_id = Some(resp.id.clone());
+                    first_chunk_ms = Some(started_at.elapsed().as_millis() as u64);
+                    debug!(
+                        completion_id = %resp.id,
+                        first_chunk_ms = first_chunk_ms.unwrap_or(0),
+                        "llm first chunk"
+                    );
+                }
+
+                chunk_count += 1;
+                debug!(
+                    completion_id = %resp.id,
+                    chunk_index = chunk_count,
+                    chunk = %protocol_json(&resp),
+                    "llm response chunk"
+                );
+
+                if let Some(chunk_usage) = resp.usage {
+                    usage = Some(chunk_usage);
+                }
+
                 let Some(choice) = resp.choices.first() else {
-                    debug!("response had no choices");
+                    debug!(
+                        completion_id = completion_id.as_deref().unwrap_or(""),
+                        "llm chunk had no choices"
+                    );
                     continue;
                 };
 
@@ -332,11 +487,13 @@ impl ChatCompletion for OpenAIChatCompletion {
 
                 if let Some(t) = &delta.content {
                     if !t.is_empty() {
+                        wire_content.push_str(t);
                         for parsed in think_parser.push(t) {
                             match parsed {
                                 ParsedTextChunk::Text(text) => {
                                     if !text.is_empty() {
                                         saw_any_text = true;
+                                        text_chars += text.chars().count();
                                         yield Ok(ChatCompletionResponseChunk::TextBlock(text));
                                     }
                                 }
@@ -371,6 +528,7 @@ impl ChatCompletion for OpenAIChatCompletion {
                             ParsedTextChunk::Text(text) => {
                                 if !text.is_empty() {
                                     saw_any_text = true;
+                                    text_chars += text.chars().count();
                                     yield Ok(ChatCompletionResponseChunk::TextBlock(text));
                                 }
                             }
@@ -384,10 +542,8 @@ impl ChatCompletion for OpenAIChatCompletion {
                             }
                         }
                     }
-                    let fr = finalize_completion_reason(
-                        finish_reason.as_ref(),
-                        std::mem::take(&mut refusal_buf),
-                    );
+                    let refusal = std::mem::take(&mut refusal_buf);
+                    let fr = finalize_completion_reason(finish_reason.as_ref(), refusal.clone());
                     let mut finalized: Vec<ToolCallRequest> = tool_buf
                         .into_iter()
                         .map(|(_, (call_id, name, arguments))| ToolCallRequest {
@@ -398,8 +554,16 @@ impl ChatCompletion for OpenAIChatCompletion {
                         .filter(|t| !t.name.is_empty())
                         .collect();
                     finalized.sort_by(|a, b| a.call_id.cmp(&b.call_id));
-                    let nb_finalized = finalized.len();
                     let tools_empty = finalized.is_empty();
+                    let response_protocol = build_response_protocol(
+                        completion_id.clone(),
+                        wire_content,
+                        refusal,
+                        &finalized,
+                        finish_reason.as_ref(),
+                        usage.clone(),
+                        chunk_count,
+                    );
                     if saw_any_text && !tools_empty {
                         yield Ok(ChatCompletionResponseChunk::TextDone);
                     }
@@ -410,13 +574,15 @@ impl ChatCompletion for OpenAIChatCompletion {
                         yield Ok(ChatCompletionResponseChunk::TextDone);
                     }
                     yield Ok(ChatCompletionResponseChunk::Done { reason: fr.clone() });
-
-                    info!(
-                        finish_reason = ?finish_reason,
-                        finalized_reason = ?fr,
-                        saw_any_text,
-                        tool_call_count = nb_finalized,
-                        "finalized"
+                    log_llm_completed(
+                        model.as_str(),
+                        connect_ms,
+                        first_chunk_ms,
+                        started_at.elapsed().as_millis() as u64,
+                        text_chars,
+                        finish_reason.as_ref(),
+                        &fr,
+                        &response_protocol,
                     );
                     return;
                 }
@@ -426,6 +592,7 @@ impl ChatCompletion for OpenAIChatCompletion {
                 match parsed {
                     ParsedTextChunk::Text(text) => {
                         if !text.is_empty() {
+                            text_chars += text.chars().count();
                             yield Ok(ChatCompletionResponseChunk::TextBlock(text));
                         }
                     }
@@ -440,15 +607,118 @@ impl ChatCompletion for OpenAIChatCompletion {
                 }
             }
 
+            let fr = finalize_completion_reason(None, refusal_buf.clone());
             yield Ok(ChatCompletionResponseChunk::Done {
-                reason: finalize_completion_reason(None, refusal_buf),
+                reason: fr.clone(),
             });
 
-            debug!("stream ended without explicit finish_reason");
+            let response_protocol = build_response_protocol(
+                completion_id.clone(),
+                wire_content,
+                refusal_buf,
+                &[],
+                None,
+                usage.clone(),
+                chunk_count,
+            );
+            log_llm_completed(
+                model.as_str(),
+                connect_ms,
+                first_chunk_ms,
+                started_at.elapsed().as_millis() as u64,
+                text_chars,
+                None,
+                &fr,
+                &response_protocol,
+            );
+            debug!(
+                completion_id = completion_id.as_deref().unwrap_or(""),
+                "llm stream ended without explicit finish_reason"
+            );
         };
 
         Ok(Box::pin(out))
     }
+}
+
+fn build_response_protocol(
+    completion_id: Option<String>,
+    content: String,
+    refusal: String,
+    tool_calls: &[ToolCallRequest],
+    finish_reason: Option<&AoFinishReason>,
+    usage: Option<CompletionUsage>,
+    chunk_count: usize,
+) -> LlmResponseProtocol {
+    LlmResponseProtocol {
+        completion_id,
+        content,
+        refusal: (!refusal.is_empty()).then_some(refusal),
+        tool_calls: tool_calls
+            .iter()
+            .map(|tool_call| LlmToolCallProtocol {
+                id: tool_call.call_id.clone(),
+                name: tool_call.name.clone(),
+                arguments: tool_call.arguments.clone(),
+            })
+            .collect(),
+        finish_reason: finish_reason.map(|reason| format!("{reason:?}")),
+        usage,
+        chunk_count,
+    }
+}
+
+fn log_llm_completed(
+    model: &str,
+    connect_ms: u64,
+    first_chunk_ms: Option<u64>,
+    total_ms: u64,
+    text_chars: usize,
+    upstream_finish_reason: Option<&AoFinishReason>,
+    finalized_reason: &ChatCompletionFinishReason,
+    response_protocol: &LlmResponseProtocol,
+) {
+    let completion_id = response_protocol.completion_id.as_deref().unwrap_or("");
+    let tool_call_count = response_protocol.tool_calls.len();
+
+    match response_protocol.usage.as_ref() {
+        Some(usage) => info!(
+            model = %model,
+            completion_id = completion_id,
+            connect_ms,
+            first_chunk_ms = first_chunk_ms.unwrap_or(0),
+            total_ms,
+            text_chars,
+            tool_call_count,
+            chunk_count = response_protocol.chunk_count,
+            upstream_finish_reason = ?upstream_finish_reason,
+            finalized_reason = ?finalized_reason,
+            prompt_tokens = usage.prompt_tokens,
+            completion_tokens = usage.completion_tokens,
+            total_tokens = usage.total_tokens,
+            "llm completed"
+        ),
+        None => info!(
+            model = %model,
+            completion_id = completion_id,
+            connect_ms,
+            first_chunk_ms = first_chunk_ms.unwrap_or(0),
+            total_ms,
+            text_chars,
+            tool_call_count,
+            chunk_count = response_protocol.chunk_count,
+            upstream_finish_reason = ?upstream_finish_reason,
+            finalized_reason = ?finalized_reason,
+            "llm completed"
+        ),
+    }
+
+    debug!(
+        model = %model,
+        completion_id = completion_id,
+        response = %protocol_json(response_protocol),
+        "llm response protocol"
+    );
 }
 
 fn merge_tool_chunk(buf: &mut HashMap<u32, (String, String, String)>, tc: &AoMessageToolCallChunk) {

@@ -5,10 +5,14 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    SkillCenter, SondaAgentRunner, SondaSessionCatalog, SondaSessionFactory,
-    SondaSessionTranscripts, SondaSessionWorkspace, SondaSettingsStore, SondaSnapshot,
-    SondaToolCatalog, SondaToolRegistration, UnregisterSkillError,
+    SkillCenter, SondaAgentRunner, SondaCompletionFactory, SondaCompletionRegistration,
+    SondaSessionCatalog,
+    SondaSessionFactory, SondaSessionTranscripts, SondaSessionWorkspace, SondaSettingsStore,
+    SondaSnapshot, SondaToolCatalog, SondaToolRegistration, SondaToolboxFactory,
+    UnregisterSkillError,
 };
+use crate::session_catalog::{SessionAgentsConfig, SessionSubAgentEntry};
+use crate::agent_runner::RUN_SUB_AGENT_TOOL_NAME;
 use moray_skillhub::{SkillHub, SkillHubError};
 use serde::Serialize;
 use serde_json::Value;
@@ -59,6 +63,7 @@ pub struct Sonda {
     pub session_catalog: Arc<SondaSessionCatalog>,
     pub session_transcripts: Arc<SondaSessionTranscripts>,
     pub session_workspace: Arc<SondaSessionWorkspace>,
+    pub toolbox_factory: Arc<SondaToolboxFactory>,
     pub agent_runner: Arc<SondaAgentRunner>,
     pub skill_hub: SkillHub,
     pub authorizer: Arc<dyn ToolCallAuthorizer>,
@@ -76,6 +81,7 @@ impl Sonda {
         session_catalog: Arc<SondaSessionCatalog>,
         session_transcripts: Arc<SondaSessionTranscripts>,
         session_workspace: Arc<SondaSessionWorkspace>,
+        toolbox_factory: Arc<SondaToolboxFactory>,
         agent_runner: Arc<SondaAgentRunner>,
         skill_hub: SkillHub,
         authorizer: Arc<dyn ToolCallAuthorizer>,
@@ -90,6 +96,7 @@ impl Sonda {
             session_catalog,
             session_transcripts,
             session_workspace,
+            toolbox_factory,
             agent_runner,
             skill_hub,
             authorizer,
@@ -143,8 +150,10 @@ impl Sonda {
         completion_id: &str,
         allowed_tools: Vec<String>,
         character: Option<String>,
+        desc: Option<String>,
     ) -> Result<()> {
-        self.agent_runner.validate_allowed_tools(&allowed_tools)?;
+        self.toolbox_factory
+            .validate_allowed_tools(&allowed_tools)?;
 
         self.settings_store.update_agent(
             agent_id,
@@ -152,9 +161,33 @@ impl Sonda {
             completion_id,
             allowed_tools,
             character,
+            desc,
         )?;
 
         Ok(())
+    }
+
+    pub fn create_agent(
+        &self,
+        name: &str,
+        completion_id: &str,
+        allowed_tools: Vec<String>,
+        character: Option<String>,
+        desc: Option<String>,
+    ) -> Result<String> {
+        self.toolbox_factory
+            .validate_allowed_tools(&allowed_tools)?;
+        Ok(self.settings_store.create_agent(
+            name,
+            completion_id,
+            allowed_tools,
+            character,
+            desc,
+        )?)
+    }
+
+    pub fn delete_agent(&self, agent_id: &str) -> Result<()> {
+        Ok(self.settings_store.delete_agent(agent_id)?)
     }
 
     pub fn create_session(&self, name: &str) -> Result<String> {
@@ -268,6 +301,40 @@ impl Sonda {
         Ok(())
     }
 
+    pub fn get_session_agents(&self, session_id: &str) -> Result<SessionAgentsConfig> {
+        let session_id = require_nonempty_trimmed(session_id, "session_id")?;
+        Ok(self.session_catalog.get_session_agents(&session_id)?)
+    }
+
+    pub fn set_session_agents(
+        &self,
+        session_id: &str,
+        leader_agent_id: &str,
+        sub_agents: Vec<SessionSubAgentEntry>,
+    ) -> Result<()> {
+        let session_id = require_nonempty_trimmed(session_id, "session_id")?;
+        let leader_agent_id = require_nonempty_trimmed(leader_agent_id, "leader_agent_id")?;
+        ensure_known_agent(&self.settings_store, &leader_agent_id)?;
+
+        for entry in &sub_agents {
+            ensure_known_agent(&self.settings_store, entry.agent_id.as_str())?;
+            if entry.agent_id == leader_agent_id {
+                return Err(InvalidContent::new(
+                    "sub_agents must not include the leader agent id",
+                )
+                .into());
+            }
+        }
+
+        self.session_catalog.set_session_agents(
+            &session_id,
+            &leader_agent_id,
+            sub_agents,
+        )?;
+
+        Ok(())
+    }
+
     /// Starts in-process background services (IM connectors, …).
     ///
     /// Application hosts should call this after [`SondaBuilder::build`] / bootstrap, not individual
@@ -294,6 +361,7 @@ impl Sonda {
 
 pub struct SondaBuilder {
     settings_store: Option<Arc<SondaSettingsStore>>,
+    completion_registration: Option<SondaCompletionRegistration>,
     skill_center: Option<SkillCenter>,
     skill_hub: Option<SkillHub>,
     session_catalog: Option<Arc<SondaSessionCatalog>>,
@@ -315,6 +383,7 @@ impl SondaBuilder {
     pub fn new() -> Self {
         Self {
             settings_store: None,
+            completion_registration: None,
             skill_center: None,
             skill_hub: None,
             session_catalog: None,
@@ -329,6 +398,14 @@ impl SondaBuilder {
 
     pub fn settings(mut self, settings_store: Arc<SondaSettingsStore>) -> Self {
         self.settings_store = Some(settings_store);
+        self
+    }
+
+    pub fn completion_registration(
+        mut self,
+        completion_registration: SondaCompletionRegistration,
+    ) -> Self {
+        self.completion_registration = Some(completion_registration);
         self
     }
 
@@ -383,6 +460,14 @@ impl SondaBuilder {
             .settings_store
             .ok_or_else(|| error_missing_field("settings_store"))?;
 
+        let completion_registration = self
+            .completion_registration
+            .ok_or_else(|| error_missing_field("completion_registration"))?;
+        let completion_factory = Arc::new(SondaCompletionFactory::new(
+            settings_store.clone(),
+            completion_registration,
+        ));
+
         let skill_center = self
             .skill_center
             .ok_or_else(|| error_missing_field("skill_center"))?;
@@ -419,22 +504,29 @@ impl SondaBuilder {
             .channel_factories
             .ok_or_else(|| error_missing_field("channel_factories"))?;
 
-        let authorizer = create_authorizer(settings_store.as_ref());
+        let authorizer = create_authorizer();
+
+        let toolbox_factory = Arc::new(SondaToolboxFactory::new(
+            settings_store.clone(),
+            authorizer.clone(),
+            harness_tool_catalog,
+            harness_tools,
+            session_workspace.clone(),
+        )?);
 
         let agent_runner = Arc::new(SondaAgentRunner::new(
             settings_store.clone(),
+            completion_factory,
+            toolbox_factory.clone(),
+            skill_center.clone(),
             session_catalog.clone(),
-            authorizer.clone(),
-            harness_tool_catalog,
-            session_workspace.clone(),
-            harness_tools,
             true,
-        )?);
+        ));
 
         validate_dependencies(
             settings_store.as_ref(),
             session_catalog.as_ref(),
-            agent_runner.as_ref(),
+            toolbox_factory.as_ref(),
         )?;
 
         let snapshot = Arc::new(SondaSnapshot::new(session_catalog.as_ref()));
@@ -463,6 +555,7 @@ impl SondaBuilder {
             session_catalog,
             session_transcripts,
             session_workspace,
+            toolbox_factory,
             agent_runner,
             skill_hub,
             authorizer,
@@ -477,12 +570,12 @@ impl SondaBuilder {
 fn validate_dependencies(
     settings: &SondaSettingsStore,
     sessions: &SondaSessionCatalog,
-    agent_runner: &SondaAgentRunner,
+    toolbox_factory: &SondaToolboxFactory,
 ) -> Result<()> {
     let settings_catalog = settings.catalog();
 
     for agent in &settings_catalog.agents {
-        agent_runner.validate_allowed_tools(&agent.allowed_tools)?;
+        toolbox_factory.validate_allowed_tools(&agent.allowed_tools)?;
     }
 
     let default_agent_id = sessions.default_agent_id();
@@ -506,14 +599,32 @@ fn validate_dependencies(
             ))
             .into());
         }
+
+        let leader_id = sessions.get_session_agent_id(entry.session_id.as_str())?;
+        for sub in &entry.sub_agents {
+            if !settings.has_agent(sub.agent_id.as_str()) {
+                return Err(MissingReference::new(format!(
+                    "entries row session_id `{}` sub_agents references unknown agent `{}`",
+                    entry.session_id, sub.agent_id,
+                ))
+                .into());
+            }
+            if sub.agent_id == leader_id {
+                return Err(InvalidContent::new(format!(
+                    "entries row session_id `{}` sub_agents must not include leader `{leader_id}`",
+                    entry.session_id,
+                ))
+                .into());
+            }
+        }
     }
 
     Ok(())
 }
 
-fn create_authorizer(_settings: &SondaSettingsStore) -> Arc<dyn ToolCallAuthorizer> {
+fn create_authorizer() -> Arc<dyn ToolCallAuthorizer> {
     // TODO: select implementation from settings when auth profiles land in TOML.
-    Arc::new(AlwaysAsking::new())
+    Arc::new(AlwaysAsking::with_auto_allow([RUN_SUB_AGENT_TOOL_NAME]))
 }
 
 fn ensure_known_agent(settings_store: &SondaSettingsStore, agent_id: &str) -> Result<()> {

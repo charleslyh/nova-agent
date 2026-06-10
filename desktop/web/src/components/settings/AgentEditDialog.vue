@@ -37,6 +37,16 @@
             spellcheck="false"
           />
         </label>
+        <label class="field">
+          <span>描述</span>
+          <textarea
+            v-model="draftDesc"
+            class="field-input field-textarea"
+            rows="2"
+            placeholder="可选，供 leader 在 run_sub_agent 工具中识别此 agent"
+            spellcheck="false"
+          />
+        </label>
         <div
           class="field tools-field"
           role="group"
@@ -63,6 +73,15 @@
         </div>
       </div>
       <footer class="dialog-foot">
+        <button
+          v-if="deleteAgent"
+          type="button"
+          class="delete-btn"
+          :disabled="deleting || saving"
+          @click="onDelete"
+        >
+          {{ deleting ? "删除中…" : "删除" }}
+        </button>
         <button
           type="button"
           class="save-btn"
@@ -97,6 +116,10 @@ const props = defineProps({
   saveAgent: {
     type: Function,
     required: true
+  },
+  deleteAgent: {
+    type: Function,
+    default: null
   }
 });
 
@@ -109,8 +132,10 @@ const completionOptions = computed(() =>
 const draftName = ref("");
 const draftCompletionId = ref("");
 const draftCharacter = ref("");
+const draftDesc = ref("");
 const draftAllowedTools = ref(new Set());
 const saving = ref(false);
+const deleting = ref(false);
 
 function agentAllowedToolNames(agent) {
   if (!Array.isArray(agent?.allowed_tools)) {
@@ -136,6 +161,7 @@ function resetDraftFromAgent() {
   draftName.value = props.agent.name ?? "";
   draftCompletionId.value = props.agent.completion_id ?? "";
   draftCharacter.value = props.agent.character ?? "";
+  draftDesc.value = props.agent.desc ?? "";
   draftAllowedTools.value = new Set(agentAllowedToolNames(props.agent));
 }
 
@@ -168,6 +194,7 @@ const isDirty = computed(() => {
     draftName.value !== (props.agent.name ?? "") ||
     draftCompletionId.value !== (props.agent.completion_id ?? "") ||
     (draftCharacter.value.trim() !== (props.agent.character ?? "").trim()) ||
+    (draftDesc.value.trim() !== (props.agent.desc ?? "").trim()) ||
     !sameAllowedToolList(
       draftAllowedToolsList.value,
       agentAllowedToolNames(props.agent),
@@ -189,13 +216,28 @@ async function onSave() {
       name: draftName.value,
       completionId: draftCompletionId.value,
       allowedTools: draftAllowedToolsList.value,
-      character: draftCharacter.value.trim() || null
+      character: draftCharacter.value.trim() || null,
+      desc: draftDesc.value.trim() || null
     });
     emit("close");
   } catch (e) {
     console.error(e);
   } finally {
     saving.value = false;
+  }
+}
+
+async function onDelete() {
+  if (!props.agent?.id || !props.deleteAgent || deleting.value) return;
+  if (!window.confirm(`确定删除 Agent「${props.agent.name}」？`)) return;
+  deleting.value = true;
+  try {
+    await props.deleteAgent(props.agent.id);
+    emit("close");
+  } catch (e) {
+    console.error(e);
+  } finally {
+    deleting.value = false;
   }
 }
 </script>
@@ -361,10 +403,20 @@ async function onSave() {
 
 .dialog-foot {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   padding: 12px 16px 16px;
   border-top: 1px solid #ececec;
   flex-shrink: 0;
+}
+
+.delete-btn {
+  border: 1px solid #f0c7c7;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  color: #b42318;
+  background: #fff;
+  cursor: pointer;
 }
 
 .save-btn {

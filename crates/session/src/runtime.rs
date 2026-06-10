@@ -1,9 +1,7 @@
 use std::mem;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use futures::{Stream, StreamExt};
 use tokio::spawn;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -182,13 +180,29 @@ pub trait SessionEventSink: Send + Sync {
     fn append(&self, event: &SessionEvent) -> std::result::Result<(), MorayError>;
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum AgentRole {
+    Leader,
+    Sub,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SessionAgentResponse {
+    pub agent_id: String,
+    pub role: AgentRole,
+    pub event: AgentResponseEvent,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
 pub enum SessionEventKind {
     TurnAccepted { input: TurnInput },
 
-    AgentResponse { agent: AgentResponseEvent },
+    AgentResponse(SessionAgentResponse),
 
     TurnFinish,
 
@@ -257,20 +271,22 @@ impl SessionRuntime {
         // without pulling session types into moray-core.
         self.context.ingest(vec![user_message]).await?;
 
-        // Sessions outlive settings edits; the agent runner resolves completion/toolbox each
-        // turn so model and tool wiring changes apply on the next submit without restart.
-        let agent_stream = self.agent_runner.create_agent_stream(
-            self.session_id.as_str(),
-            self.context.clone(),
-            cancellation,
-        )?;
+        let session_id = self.session_id.clone();
+        let runner = self.agent_runner.clone();
+        let context = self.context.clone();
+        let sink = self.event_sink.clone();
+        let inflight = self.inflight.clone();
 
-        spawn(Self::drain_agent_stream(
-            self.session_id.clone(),
-            agent_stream,
-            self.event_sink.clone(),
-            self.inflight.clone(),
-        ));
+        spawn(async move {
+            let _ = runner
+                .run_turn(session_id.as_str(), context, cancellation, sink.clone())
+                .await;
+
+            let finish = event_of(session_id.as_str(), SessionEventKind::TurnFinish);
+            let _ = sink.append(&finish);
+
+            inflight.complete_turn();
+        });
 
         Ok(())
     }
@@ -296,28 +312,5 @@ impl SessionRuntime {
         self.context.clear().await?;
 
         Ok(())
-    }
-
-    async fn drain_agent_stream(
-        session_id: String,
-        mut agent_stream: Pin<Box<dyn Stream<Item = AgentResponseEvent> + Send>>,
-        store: Arc<dyn SessionEventSink>,
-        inflight: InflightSlot,
-    ) {
-        while let Some(agent_ev) = agent_stream.next().await {
-            let e = event_of(
-                session_id.as_str(),
-                SessionEventKind::AgentResponse { agent: agent_ev },
-            );
-
-            if store.append(&e).is_err() {
-                break;
-            }
-        }
-
-        let finish = event_of(session_id.as_str(), SessionEventKind::TurnFinish);
-        let _ = store.append(&finish);
-
-        inflight.complete_turn();
     }
 }

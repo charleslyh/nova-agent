@@ -176,7 +176,7 @@ impl SondaSnapshot {
         let work_status = match &event.kind {
             SessionEventKind::TurnAccepted { .. } => Some(SessionWorkStatus::Running),
             SessionEventKind::TurnFinish | SessionEventKind::Reset => Some(SessionWorkStatus::Idle),
-            SessionEventKind::AgentResponse { .. } => None,
+            SessionEventKind::AgentResponse(_) => None,
         };
 
         if let Some(status) = work_status {

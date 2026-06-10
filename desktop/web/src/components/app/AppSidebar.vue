@@ -228,7 +228,7 @@ watch(
   --sidebar-entry-padding: 8px 8px;
   --sidebar-entry-radius: 8px;
   --sidebar-entry-text: #2b2b30;
-  --sidebar-entry-icon-size: 16px;
+  --sidebar-entry-icon-size: 14px;
   --sidebar-entry-icon-color: #5c5c66;
   --sidebar-entry-hover-bg: rgba(0, 0, 0, 0.05);
   --sidebar-entry-active-bg: #fcfcfc;

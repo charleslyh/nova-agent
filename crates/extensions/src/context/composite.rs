@@ -207,6 +207,10 @@ impl ContextEngine for CompositeContextEngine {
         self.transcript.write().map_err(|_| lock_err())?.clear();
         Ok(())
     }
+
+    fn snapshot(&self) -> Option<Vec<ChatCompletionRequestMessage>> {
+        self.transcript.read().ok().map(|g| g.clone())
+    }
 }
 
 #[cfg(debug_assertions)]

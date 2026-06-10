@@ -13,12 +13,13 @@ use moray_channels::{
     ChannelDataRedactFn, ChannelEntry, ChannelError, ChannelFactoryFn,
 };
 use moray_core::TypedTool;
+use moray_extensions::completions::OpenAIChatCompletion;
 use moray_skillhub::SkillHub;
 use moray_sonda::{
     SessionCatalogError, SkillCenter, SkillDirKind, SkillDirSource, SkillFilterKind, Sonda,
-    SondaBuilder, SondaError, SondaSessionCatalog, SondaSessionTranscripts, SondaSessionWorkspace,
-    SondaSettingsStore, SondaSettingsStoreError, SondaToolCatalog, SondaToolCatalogError,
-    SondaToolRegistration,
+    SondaBuilder, SondaCompletionRegistration, SondaError, SondaSessionCatalog,
+    SondaSessionTranscripts, SondaSessionWorkspace, SondaSettingsStore, SondaSettingsStoreError,
+    SondaToolCatalog, SondaToolCatalogError, SondaToolRegistration,
 };
 use tracing::{info, warn};
 
@@ -107,7 +108,11 @@ fn create_skill_center(paths: &SondaRuntimePaths) -> Result<SkillCenter, SondaBo
     Ok(center)
 }
 
-fn tool_factories(
+fn completion_registration() -> SondaCompletionRegistration {
+    SondaCompletionRegistration::new(|endpoint| Arc::new(OpenAIChatCompletion::new(endpoint)))
+}
+
+fn tool_registrations(
     cli_path: impl AsRef<Path>,
     tools_catalog_path: impl AsRef<Path>,
 ) -> Vec<SondaToolRegistration> {
@@ -189,6 +194,7 @@ pub fn build_sonda(
 
     SondaBuilder::new()
         .settings(settings_store)
+        .completion_registration(completion_registration())
         .skill_center(skill_center)
         .skill_hub(skill_hub)
         .session_catalog(session_catalog)
@@ -198,7 +204,7 @@ pub fn build_sonda(
         .harness_components(
             session_workspace,
             tool_catalog,
-            tool_factories(&paths.cli_path, &paths.tools_catalog_path),
+            tool_registrations(&paths.cli_path, &paths.tools_catalog_path),
         )
         .build()
         .map_err(Into::into)

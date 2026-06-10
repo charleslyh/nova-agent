@@ -92,17 +92,24 @@
           </header>
 
           <div class="content-body">
-            <div v-if="selectedNavId === 'agents'" class="tile-row">
-              <button
-                v-for="a in settingsCatalog.agents"
-                :key="a.id"
-                type="button"
-                class="agent-tile"
-                @click="openEdit(a)"
-              >
-                <span class="agent-tile-name">{{ a.name }}</span>
-                <span class="agent-tile-meta">{{ completionName(a.completion_id) }}</span>
-              </button>
+            <div v-if="selectedNavId === 'agents'" class="agents-panel">
+              <div class="agents-toolbar">
+                <button type="button" class="agents-create-btn" @click="startCreateAgent">
+                  新建 Agent
+                </button>
+              </div>
+              <div class="tile-row">
+                <button
+                  v-for="a in settingsCatalog.agents"
+                  :key="a.id"
+                  type="button"
+                  class="agent-tile"
+                  @click="openEdit(a)"
+                >
+                  <span class="agent-tile-name">{{ a.name }}</span>
+                  <span class="agent-tile-meta">{{ completionName(a.completion_id) }}</span>
+                </button>
+              </div>
             </div>
             <div v-else-if="selectedNavId === 'skills'" class="skills-panel">
               <template v-if="inSkillDetail">
@@ -259,6 +266,7 @@
       :completions="settingsCatalog.completions"
       :available-tools="availableTools"
       :save-agent="saveAgent"
+      :delete-agent="deleteAgent"
       @close="closeEdit"
     />
   </div>
@@ -286,6 +294,14 @@ const props = defineProps({
     default: () => []
   },
   saveAgent: {
+    type: Function,
+    required: true
+  },
+  createAgent: {
+    type: Function,
+    required: true
+  },
+  deleteAgent: {
     type: Function,
     required: true
   },
@@ -472,6 +488,22 @@ function openEdit(agent) {
 function closeEdit() {
   editOpen.value = false;
   editingAgent.value = null;
+}
+
+async function startCreateAgent() {
+  const completionId = props.settingsCatalog.completions[0]?.id;
+  if (!completionId) return;
+  try {
+    await props.createAgent({
+      name: "新 Agent",
+      completionId,
+      allowedTools: [],
+      character: null,
+      desc: null
+    });
+  } catch (e) {
+    console.error(e);
+  }
 }
 </script>
 
@@ -754,6 +786,26 @@ function closeEdit() {
   min-height: 0;
   overflow-y: auto;
   padding: 16px 18px 20px;
+}
+
+.agents-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agents-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.agents-create-btn {
+  border: 1px solid #d8d8dc;
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .tile-row {

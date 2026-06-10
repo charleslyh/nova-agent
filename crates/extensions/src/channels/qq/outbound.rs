@@ -6,7 +6,7 @@ use std::sync::Arc;
 use moray_core::{
     parse_tool_call_args, AgentFinishKind, AgentResponseEvent, ToolCallEventKind,
 };
-use moray_session::{SessionEvent, SessionEventKind};
+use moray_session::{AgentRole, SessionEvent, SessionEventKind};
 use tokio::sync::RwLock;
 
 use crate::channels::qq::approval::format_approval_prompt;
@@ -60,7 +60,11 @@ impl QqSessionOutbound {
 
     pub async fn on_session_event(&mut self, event: &SessionEvent) {
         match &event.kind {
-            SessionEventKind::AgentResponse { agent } => self.on_agent_event(agent).await,
+            SessionEventKind::AgentResponse(chunk) => {
+                if matches!(chunk.role, AgentRole::Leader) {
+                    self.on_agent_event(&chunk.event).await;
+                }
+            }
             SessionEventKind::TurnFinish => self.on_turn_finish().await,
             SessionEventKind::Reset => {
                 self.state = QqTurnState::default();

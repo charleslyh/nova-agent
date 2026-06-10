@@ -27,6 +27,7 @@
         v-else-if="channelIconPlatform"
         :platform="channelIconPlatform"
       />
+      <!-- Lucide message-square-text (ISC) -->
       <svg
         v-else
         viewBox="0 0 24 24"
@@ -34,13 +35,12 @@
         fill="none"
         stroke="currentColor"
         stroke-width="1.75"
+        stroke-linecap="round"
+        stroke-linejoin="round"
       >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          d="M7 5.5h10a2.5 2.5 0 0 1 2.5 2.5v5a2.5 2.5 0 0 1-2.5 2.5H11l-2.5 2.5V15.5H7a2.5 2.5 0 0 1-2.5-2.5V8a2.5 2.5 0 0 1 2.5-2.5z"
-        />
-        <path stroke-linecap="round" d="M9.5 10h5" />
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        <path d="M13 8H7" />
+        <path d="M17 12H7" />
       </svg>
     </span>
     <span class="sidebar-entry__label-wrap">
@@ -126,8 +126,8 @@ const rowTitle = computed(() => {
 
 .sidebar-entry__icon {
   flex-shrink: 0;
-  width: var(--sidebar-entry-icon-size, 16px);
-  height: var(--sidebar-entry-icon-size, 16px);
+  width: var(--sidebar-entry-icon-size, 14px);
+  height: var(--sidebar-entry-icon-size, 14px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -136,8 +136,8 @@ const rowTitle = computed(() => {
 
 .sidebar-entry__icon :deep(.sidebar-entry__icon-svg),
 .sidebar-entry__icon-svg {
-  width: var(--sidebar-entry-icon-size, 16px);
-  height: var(--sidebar-entry-icon-size, 16px);
+  width: var(--sidebar-entry-icon-size, 14px);
+  height: var(--sidebar-entry-icon-size, 14px);
 }
 
 .sidebar-entry__icon-svg--spinner {

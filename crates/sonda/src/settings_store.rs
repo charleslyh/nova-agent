@@ -47,6 +47,9 @@ pub struct SondaSettingsAgentEntry {
     /// Optional persona text for system prompt `{{character}}` substitution.
     #[serde(default)]
     pub character: Option<String>,
+    /// Short description for sub-agent tool manifest listing.
+    #[serde(default)]
+    pub desc: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -120,6 +123,7 @@ impl SondaSettingsStore {
         completion_id: &str,
         allowed_tools: Vec<String>,
         character: Option<String>,
+        desc: Option<String>,
     ) -> crate::error::Result<()> {
         let agent_id = require_argument_nonempty(agent_id, "agent_id")?;
         let name = require_argument_nonempty(name, "name")?;
@@ -144,10 +148,60 @@ impl SondaSettingsStore {
             entry.completion_id = completion_id.to_string();
             entry.allowed_tools = allowed_tools;
             entry.character = character;
+            entry.desc = desc;
         }
 
         save(self)?;
 
+        Ok(())
+    }
+
+    pub fn create_agent(
+        &self,
+        name: &str,
+        completion_id: &str,
+        allowed_tools: Vec<String>,
+        character: Option<String>,
+        desc: Option<String>,
+    ) -> crate::error::Result<String> {
+        let name = require_argument_nonempty(name, "name")?;
+        let completion_id = require_argument_nonempty(completion_id, "completion_id")?;
+
+        {
+            let inner = self.inner.read();
+            ensure_completion_exists(&inner, completion_id)?;
+        }
+
+        let agent_id = new_agent_id();
+        {
+            let mut inner = self.inner.write();
+            inner.agents.push(SondaSettingsAgentEntry {
+                id: agent_id.clone(),
+                name: name.to_string(),
+                completion_id: completion_id.to_string(),
+                allowed_tools,
+                character,
+                desc,
+            });
+        }
+
+        save(self)?;
+        Ok(agent_id)
+    }
+
+    pub fn delete_agent(&self, agent_id: &str) -> crate::error::Result<()> {
+        let agent_id = require_argument_nonempty(agent_id, "agent_id")?;
+        let mut inner = self.inner.write();
+        let before = inner.agents.len();
+        inner.agents.retain(|a| a.id != agent_id);
+        if inner.agents.len() == before {
+            return Err(InvalidArguments::new("agent_id", "corresponding agent not found").into());
+        }
+        if inner.agents.is_empty() {
+            return Err(InvalidContent::new("cannot delete the last agent").into());
+        }
+        drop(inner);
+        save(self)?;
         Ok(())
     }
 
@@ -182,6 +236,17 @@ impl SondaSettingsStore {
             .find(|a| a.id == agent_id)
             .ok_or_else(|| InvalidArguments::new("agent_id", "corresponding agent not found"))?;
         Ok(agent.allowed_tools.clone())
+    }
+
+    /// Returns the agent's optional description for sub-agent tool listing.
+    pub fn agent_desc(&self, agent_id: &str) -> crate::error::Result<String> {
+        let inner = self.inner.read();
+        let agent = inner
+            .agents
+            .iter()
+            .find(|a| a.id == agent_id)
+            .ok_or_else(|| InvalidArguments::new("agent_id", "corresponding agent not found"))?;
+        Ok(agent.desc.clone().unwrap_or_default())
     }
 
     /// Returns the agent's optional `character` persona text.
@@ -324,7 +389,12 @@ fn merge_agent_entry(
             patch.allowed_tools
         },
         character: patch.character.or(base.character),
+        desc: patch.desc.or(base.desc),
     }
+}
+
+fn new_agent_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()[..8].to_string()
 }
 
 fn merge_completion_entry(
@@ -443,6 +513,8 @@ mod tests {
     use std::collections::HashMap;
 
     use moray_extensions::auths::AlwaysAsking;
+    use moray_extensions::completions::OpenAIChatCompletion;
+    use crate::SondaCompletionRegistration;
     use crate::transcripts::SondaSessionTranscripts;
     use tempfile::tempdir;
 
@@ -452,7 +524,7 @@ mod tests {
     use crate::sonda::SondaBuilder;
     use moray_skillhub::SkillHub;
     use crate::skill_center::{SkillCenter, SkillDirKind, SkillDirSource};
-    use crate::agent_runner::{SondaAgentRunner, SondaToolRegistration};
+    use crate::toolbox_factory::{SondaToolRegistration, SondaToolboxFactory};
     use crate::SondaToolCatalog;
     use moray_extensions::tools::{
         CalcTool, FileReadTool, FileWriteTool, ImageCreateTool, ImageEditTool, ShellTool,
@@ -471,6 +543,10 @@ mod tests {
 
     fn open_test_store(user_path: &Path) -> Result<SondaSettingsStore> {
         SondaSettingsStore::load(&missing_bundled_path(user_path), user_path)
+    }
+
+    fn testing_completion_registration() -> SondaCompletionRegistration {
+        SondaCompletionRegistration::new(|endpoint| Arc::new(OpenAIChatCompletion::new(endpoint)))
     }
 
     fn build_test_sonda(server_path: &Path, sessions_path: &Path) -> crate::error::Result<()> {
@@ -496,6 +572,7 @@ mod tests {
         let session_workspace = Arc::new(crate::SondaSessionWorkspace::new(sessions_dir.clone()));
         let _ = SondaBuilder::new()
             .settings(settings_store)
+            .completion_registration(testing_completion_registration())
             .skill_center(skill_center)
             .skill_hub(skill_hub)
             .session_catalog(session_catalog)
@@ -974,6 +1051,7 @@ allowed_tools = ["calc", "calc"]
                 "a1b2c3d4",
                 vec!["shell".into(), "calc".into()],
                 None,
+                None,
             )
             .expect("update agent");
         let reloaded = open_test_store(&server).unwrap();
@@ -992,15 +1070,8 @@ allowed_tools = ["calc", "calc"]
         std::fs::write(&server, sample_server_settings_toml()).unwrap();
         std::fs::write(&sessions, r#"default_agent_id = "z9y8x7w6""#).unwrap();
         let settings_store = Arc::new(open_test_store(&server).unwrap());
-        let session_catalog = Arc::new(SondaSessionCatalog::open(&sessions).unwrap());
-        let factory = testing_session_agent_runner(
-            settings_store,
-            session_catalog,
-            authorizer,
-            std::env::temp_dir().join("moray-sonda-test-sessions"),
-        )
-        .expect("factory");
-        let err = factory
+        let toolbox_factory = testing_toolbox_factory(authorizer, settings_store);
+        let err = toolbox_factory
             .validate_allowed_tools(&["nope".into()])
             .expect_err("unknown tool");
         assert!(err.to_string().contains("unknown tool"));
@@ -1070,22 +1141,21 @@ parameters = '{}'
         ]
     }
 
-    fn testing_session_agent_runner(
-        settings_store: Arc<SondaSettingsStore>,
-        session_catalog: Arc<SondaSessionCatalog>,
+    fn testing_toolbox_factory(
         authorizer: Arc<dyn moray_core::ToolCallAuthorizer>,
-        sessions_dir: std::path::PathBuf,
-    ) -> crate::error::Result<Arc<SondaAgentRunner>> {
-        let workspace = Arc::new(crate::SondaSessionWorkspace::new(sessions_dir));
-        Ok(Arc::new(SondaAgentRunner::new(
+        settings_store: Arc<SondaSettingsStore>,
+    ) -> SondaToolboxFactory {
+        let workspace = Arc::new(crate::SondaSessionWorkspace::new(
+            std::env::temp_dir().join("moray-sonda-test-sessions"),
+        ));
+        SondaToolboxFactory::new(
             settings_store,
-            session_catalog,
             authorizer,
             testing_tools_catalog(),
-            workspace,
             testing_registrations(testing_shell_env()),
-            true,
-        )?))
+            workspace,
+        )
+        .expect("testing toolbox factory")
     }
 
     #[test]
@@ -1156,7 +1226,7 @@ default_agent_id = "zzzzzzzz"
         load_settings_docs(&server, &sessions).unwrap();
         let settings = open_test_store(&server).unwrap();
         settings
-            .update_agent("zzzzzzzz", "Ag", "bbbbbbbb", vec!["calc".into()], None)
+            .update_agent("zzzzzzzz", "Ag", "bbbbbbbb", vec!["calc".into()], None, None)
             .expect("update agent");
         let raw = std::fs::read_to_string(&server).expect("read server.toml");
         assert!(

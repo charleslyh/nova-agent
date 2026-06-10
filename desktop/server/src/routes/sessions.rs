@@ -8,7 +8,7 @@ use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use moray_session::TurnInput;
-use moray_sonda::{SessionCatalogEntry, Sonda, SondaSessionTranscriptsError};
+use moray_sonda::{SessionCatalogEntry, SessionSubAgentEntry, Sonda, SondaSessionTranscriptsError};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{response_with, session_error_response, sonda_error_response};
@@ -19,6 +19,7 @@ pub(super) fn router() -> Router<Arc<Sonda>> {
         .route("/",                            get(sessions_catalog).post(sessions_create))
         .route("/{session_id}",                delete(sessions_delete))
         .route("/{session_id}/agent",          get(sessions_get_agent).put(sessions_set_agent))
+        .route("/{session_id}/agents",         get(sessions_get_agents).put(sessions_set_agents))
         .route("/{session_id}/submit",         post(sessions_submit))
         .route("/{session_id}/cancel",         post(sessions_cancel))
         .route("/{session_id}/reset",          post(sessions_reset))
@@ -97,6 +98,38 @@ async fn sessions_get_agent(
 #[derive(Deserialize)]
 struct SessionSetAgentReq {
     agent_id: String,
+}
+
+async fn sessions_get_agents(
+    State(sonda): State<Arc<Sonda>>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    match sonda.get_session_agents(session_id.as_str()) {
+        Ok(config) => Json(config).into_response(),
+        Err(e) => sonda_error_response(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct SessionSetAgentsReq {
+    leader_agent_id: String,
+    #[serde(default)]
+    sub_agents: Vec<SessionSubAgentEntry>,
+}
+
+async fn sessions_set_agents(
+    State(sonda): State<Arc<Sonda>>,
+    Path(session_id): Path<String>,
+    Json(req): Json<SessionSetAgentsReq>,
+) -> impl IntoResponse {
+    match sonda.set_session_agents(
+        session_id.as_str(),
+        req.leader_agent_id.as_str(),
+        req.sub_agents,
+    ) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => sonda_error_response(e),
+    }
 }
 
 async fn sessions_set_agent(

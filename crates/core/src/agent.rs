@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn, Instrument};
+use tracing::{debug, info, warn};
 
 use crate::completion::{
     ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,
@@ -55,8 +55,7 @@ pub fn agent_run(
     cancellation: CancellationToken,
 ) -> Result<Pin<Box<dyn Stream<Item = AgentResponseEvent> + Send>>, MorayError> {
     let (tx, rx) = unbounded_channel::<AgentResponseEvent>();
-    let run_span = tracing::info_span!("agent.run");
-    info!(parent: &run_span, "started");
+    info!("started");
 
     tokio::spawn(
         agent_run_impl(
@@ -67,7 +66,6 @@ pub fn agent_run(
             cancellation,
             tx,
         )
-        .instrument(run_span),
     );
 
     Ok(Box::pin(UnboundedReceiverStream::new(rx)))

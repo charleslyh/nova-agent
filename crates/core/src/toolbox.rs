@@ -558,6 +558,19 @@ impl Toolbox {
         }
     }
 
+    /// Merges `manifests` and `tools` into this toolbox in place.
+    pub fn extend(
+        &mut self,
+        manifests: impl IntoIterator<Item = ToolManifest>,
+        tools: impl IntoIterator<Item = Arc<dyn Tool>>,
+    ) {
+        let tool_map = Arc::make_mut(&mut self.tools);
+        for tool in tools {
+            tool_map.insert(tool.name().to_string(), tool);
+        }
+        self.manifests.extend(manifests);
+    }
+
     pub async fn list_tools(&self) -> Vec<ToolManifest> {
         self.manifests.clone()
     }

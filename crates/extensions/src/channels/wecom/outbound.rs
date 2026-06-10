@@ -8,7 +8,7 @@ use moray_core::{
     parse_tool_call_args, AgentFinishKind, AgentResponseEvent, ToolCallEventKind,
     ToolCallStatus,
 };
-use moray_session::{SessionEvent, SessionEventKind};
+use moray_session::{AgentRole, SessionEvent, SessionEventKind};
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
@@ -253,7 +253,11 @@ impl WeComSessionOutbound {
 
     pub async fn on_session_event(self: &Arc<Self>, event: &SessionEvent) {
         match &event.kind {
-            SessionEventKind::AgentResponse { agent } => self.on_agent_event(agent).await,
+            SessionEventKind::AgentResponse(chunk) => {
+                if matches!(chunk.role, AgentRole::Leader) {
+                    self.on_agent_event(&chunk.event).await;
+                }
+            }
             SessionEventKind::TurnFinish => self.on_turn_finish().await,
             SessionEventKind::Reset => {
                 let mut state = self.state.lock().await;

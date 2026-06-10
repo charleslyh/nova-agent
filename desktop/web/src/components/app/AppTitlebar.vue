@@ -1,16 +1,5 @@
 <template>
   <header class="app-titlebar" data-tauri-drag-region>
-    <div v-if="showAgentSelect" class="app-titlebar-leading">
-      <label class="agent-select-label">
-        <select
-          class="agent-select"
-          :value="currentAgentId"
-          @change="$emit('select-agent', $event.target.value)"
-        >
-          <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}</option>
-        </select>
-      </label>
-    </div>
     <div class="app-titlebar-spacer" aria-hidden="true" />
     <button
       v-if="showChannelSettings"
@@ -57,18 +46,6 @@
 
 <script setup>
 defineProps({
-  agents: {
-    type: Array,
-    default: () => []
-  },
-  currentAgentId: {
-    type: String,
-    default: ""
-  },
-  showAgentSelect: {
-    type: Boolean,
-    default: false
-  },
   showActions: {
     type: Boolean,
     default: true
@@ -87,7 +64,7 @@ defineProps({
   }
 });
 
-defineEmits(["reset", "open-channel-settings", "toggle-session-detail", "select-agent"]);
+defineEmits(["reset", "open-channel-settings", "toggle-session-detail"]);
 </script>
 
 <style scoped>
@@ -104,41 +81,6 @@ defineEmits(["reset", "open-channel-settings", "toggle-session-detail", "select-
   background: #fcfcfc;
   -webkit-app-region: drag;
   app-region: drag;
-}
-
-.app-titlebar-leading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
-}
-
-.agent-select-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-}
-
-.agent-select-label__text {
-  font-size: 12px;
-  color: #6a6a6a;
-  white-space: nowrap;
-}
-
-.agent-select {
-  height: 28px;
-  min-width: 140px;
-  max-width: min(240px, 40vw);
-  padding: 4px 28px 4px 10px;
-  border-radius: 6px;
-  border: 1px solid #d5d5d9;
-  font-size: 12px;
-  background-color: #fff;
-  color: #333;
-  cursor: pointer;
 }
 
 .app-titlebar-spacer {

@@ -25,11 +25,11 @@ export function useChatSession() {
   const normalSessionDeleteTarget = ref(null);
   const normalSessionDeleting = ref(false);
   const normalSessionDeleteError = ref("");
-  const activeAssistantId = ref(null);
   const activeThinkId = ref(null);
   const thinkCardIdsByRound = new Map();
   const currentAgentRound = ref(0);
   const toolCardsByCallId = new Map();
+  const activeAssistantByStream = new Map();
   let client;
   let unsubscribeEvents = null;
   let unsubscribeSondaState = null;
@@ -101,17 +101,22 @@ export function useChatSession() {
     return item;
   }
 
-  function appendAssistantText(text) {
+  function assistantStreamKey(agentRole, agentId) {
+    return `${agentRole ?? "leader"}:${agentId ?? ""}`;
+  }
+
+  function appendAssistantText(text, { agentId, agentRole } = {}) {
     if (text == null || text === "") return;
-    if (!activeAssistantId.value) {
-      // Do not open a new assistant bubble for whitespace-only prefixes.
+    const streamKey = assistantStreamKey(agentRole, agentId);
+    let activeId = activeAssistantByStream.get(streamKey);
+    if (!activeId) {
       if (!isNonEmptyString(text)) return;
-      const item = push("assistant", "");
-      activeAssistantId.value = item.id;
+      const item = push("assistant", "", { agentId, agentRole });
+      activeId = item.id;
+      activeAssistantByStream.set(streamKey, activeId);
     }
-    const target = transcript.value.find((it) => it.id === activeAssistantId.value);
+    const target = transcript.value.find((it) => it.id === activeId);
     if (target) {
-      // Preserve newline-only deltas once streaming started (required for markdown tables).
       target.text += text;
     }
   }
@@ -150,8 +155,11 @@ export function useChatSession() {
   function ensureThinkCardForCurrentRound() {
     let thinkId = thinkCardIdsByRound.get(currentAgentRound.value);
     if (!thinkId) {
-      const assistantIndex = activeAssistantId.value
-        ? transcript.value.findIndex((it) => it.id === activeAssistantId.value)
+      const leaderStreamId = [...activeAssistantByStream.entries()].find(([key]) =>
+        key.startsWith("leader:")
+      )?.[1];
+      const assistantIndex = leaderStreamId
+        ? transcript.value.findIndex((it) => it.id === leaderStreamId)
         : -1;
       const item = {
         id: `${Date.now()}-${Math.random()}`,
@@ -198,8 +206,12 @@ export function useChatSession() {
     );
   }
 
-  function finishAssistantChunkStream() {
-    activeAssistantId.value = null;
+  function finishAssistantChunkStream({ agentId, agentRole } = {}) {
+    if (agentId != null && agentRole != null) {
+      activeAssistantByStream.delete(assistantStreamKey(agentRole, agentId));
+    } else {
+      activeAssistantByStream.clear();
+    }
     pruneEmptyAssistantMessages();
   }
 
@@ -222,6 +234,8 @@ export function useChatSession() {
         callId,
         toolName: seed.toolName ?? "(tool)",
         arguments: seed.arguments ?? "",
+        agentId: seed.agentId,
+        agentRole: seed.agentRole,
         authState: "unknown",
         authDecision: null,
         awaitAuthAction: false,
@@ -237,11 +251,15 @@ export function useChatSession() {
       if (seed.arguments && !item.arguments) {
         item.arguments = seed.arguments;
       }
+      if (seed.agentId && !item.agentId) {
+        item.agentId = seed.agentId;
+        item.agentRole = seed.agentRole;
+      }
     }
     return item;
   }
 
-  function handleToolCallAgentEvent(agentEv) {
+  function handleToolCallAgentEvent(agentEv, streamCtx = {}) {
     if (agentEv?.type !== "tool_call" || !agentEv.event) return;
     const ev = agentEv.event;
     const callId = ev.call_id;
@@ -252,7 +270,9 @@ export function useChatSession() {
       case "requested": {
         ensureToolCard(callId, {
           toolName: ev.name,
-          arguments: ev.arguments ?? ""
+          arguments: ev.arguments ?? "",
+          agentId: streamCtx.agentId,
+          agentRole: streamCtx.agentRole
         });
         break;
       }
@@ -347,44 +367,63 @@ export function useChatSession() {
   function handleSessionEvent(event) {
     const kind = event?.kind?.type;
     if (kind === "agent_response") {
-      const agentEv = event.kind.agent;
+      const agentEv = event.kind.event;
+      const agentId = event.kind.agent_id;
+      const role = event.kind.role ?? "leader";
+      const streamCtx = { agentId, agentRole: role };
+
       if (agentEv?.type === "started") {
-        currentAgentRound.value += 1;
-        activeAssistantId.value = null;
-        activeThinkId.value = null;
+        if (role === "leader") {
+          currentAgentRound.value += 1;
+          activeThinkId.value = null;
+        }
+        activeAssistantByStream.delete(assistantStreamKey(role, agentId));
       }
-      if (agentEv?.type === "completion_response" && agentEv.chunk?.type === "think") {
+      if (role === "leader" && agentEv?.type === "completion_response" && agentEv.chunk?.type === "think") {
         const thinkText = agentEv.chunk.content ?? "";
         appendThinkText(thinkText);
       }
-      if (agentEv?.type === "completion_response" && agentEv.chunk?.type === "think_done") {
+      if (role === "leader" && agentEv?.type === "completion_response" && agentEv.chunk?.type === "think_done") {
         finishThinkChunkStream();
       }
-      if (agentEv?.type === "completion_response" && agentEv.chunk?.type === "text_block") {
+      if (
+        role !== "sub" &&
+        agentEv?.type === "completion_response" &&
+        agentEv.chunk?.type === "text_block"
+      ) {
         const text = agentEv.chunk.content ?? agentEv.chunk.text ?? "";
-        appendAssistantText(text);
+        appendAssistantText(text, streamCtx);
       }
-      if (agentEv?.type === "completion_response" && agentEv.chunk?.type === "text_done") {
-        finishAssistantChunkStream();
+      if (
+        role !== "sub" &&
+        agentEv?.type === "completion_response" &&
+        agentEv.chunk?.type === "text_done"
+      ) {
+        finishAssistantChunkStream(streamCtx);
       }
       if (agentEv?.type === "completion_response" && agentEv.chunk?.type === "tool_call") {
         ensureToolCard(agentEv.chunk.call_id, {
           toolName: agentEv.chunk.name,
-          arguments: agentEv.chunk.arguments
+          arguments: agentEv.chunk.arguments,
+          agentId,
+          agentRole: role
         });
       }
-      handleToolCallAgentEvent(agentEv);
+      handleToolCallAgentEvent(agentEv, streamCtx);
       if (agentEv?.type === "finished") {
-        if (isFinishedCanceled(agentEv.kind)) {
+        if (role === "sub") {
+          finishAssistantChunkStream(streamCtx);
+        } else if (isFinishedCanceled(agentEv.kind)) {
           markInFlightToolCardsCanceled();
-          push("assistant", "（已停止生成）");
-          finishAssistantChunkStream();
+          push("assistant", "（已停止生成）", streamCtx);
+          finishAssistantChunkStream(streamCtx);
         } else {
           const failedReason = getFinishedFailedReason(agentEv.kind);
           if (failedReason) {
             appendAssistantError(failedReason);
           }
-          finishAssistantChunkStream();
+          finishAssistantChunkStream(streamCtx);
+          finishThinkChunkStream();
         }
       }
     } else if (kind === "turn_accepted") {
@@ -816,14 +855,46 @@ export function useChatSession() {
     return client.uninstallSkill(skillId);
   }
 
-  async function saveAgentFromSettings({ agentId, name, completionId, allowedTools, character }) {
+  async function saveAgentFromSettings({ agentId, name, completionId, allowedTools, character, desc }) {
     await client.updateAgent(agentId, {
       name,
       completion_id: completionId,
       allowed_tools: allowedTools,
-      character: character ?? null
+      character: character ?? null,
+      desc: desc ?? null
     });
     await refreshAgentSelectionState(activeSessionId.value);
+  }
+
+  async function createAgentFromSettings({ name, completionId, allowedTools, character, desc }) {
+    const body = await client.createAgent({
+      name,
+      completion_id: completionId,
+      allowed_tools: allowedTools,
+      character: character ?? null,
+      desc: desc ?? null
+    });
+    await refreshAgentSelectionState(activeSessionId.value);
+    return body?.id ?? null;
+  }
+
+  async function deleteAgentFromSettings(agentId) {
+    await client.deleteAgent(agentId);
+    await refreshAgentSelectionState(activeSessionId.value);
+  }
+
+  async function getSessionAgentsConfig(sessionId) {
+    return client.getSessionAgents(sessionId);
+  }
+
+  async function saveSessionAgentsConfig(sessionId, { leaderAgentId, subAgents }) {
+    await client.setSessionAgents(sessionId, {
+      leader_agent_id: leaderAgentId,
+      sub_agents: subAgents
+    });
+    if (activeSessionId.value === sessionId) {
+      currentAgentId.value = leaderAgentId;
+    }
   }
 
   function startChannelEdit(inst) {
@@ -980,6 +1051,10 @@ export function useChatSession() {
     closeSettings,
     selectComposerAgent,
     saveAgentFromSettings,
+    createAgentFromSettings,
+    deleteAgentFromSettings,
+    getSessionAgentsConfig,
+    saveSessionAgentsConfig,
     getSkillDetail,
     searchSkillHub,
     installSkill,

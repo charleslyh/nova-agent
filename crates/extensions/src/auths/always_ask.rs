@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -10,6 +10,7 @@ use tokio::sync::oneshot;
 
 pub struct AlwaysAsking {
     pending_auth: Mutex<HashMap<String, oneshot::Sender<bool>>>,
+    auto_allow: HashSet<String>,
 }
 
 impl Default for AlwaysAsking {
@@ -20,8 +21,16 @@ impl Default for AlwaysAsking {
 
 impl AlwaysAsking {
     pub fn new() -> Self {
+        Self::with_auto_allow(std::iter::empty::<&str>())
+    }
+
+    pub fn with_auto_allow(names: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
         Self {
             pending_auth: Mutex::new(HashMap::new()),
+            auto_allow: names
+                .into_iter()
+                .map(|n| n.as_ref().to_string())
+                .collect(),
         }
     }
 }
@@ -48,6 +57,10 @@ impl ToolCallAuthorizer for AlwaysAsking {
         args: &Value,
         responder: Arc<dyn ToolCallResponder>,
     ) -> bool {
+        if self.auto_allow.contains(tool_name) {
+            return true;
+        }
+
         let (tx, rx) = oneshot::channel();
         self.pending_auth
             .lock()

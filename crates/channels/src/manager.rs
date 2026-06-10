@@ -171,7 +171,7 @@ impl ChannelsManager {
                                 Some(event) => {
                                     let forward = matches!(
                                         event.kind,
-                                        SessionEventKind::AgentResponse { .. }
+                                        SessionEventKind::AgentResponse(_)
                                             | SessionEventKind::TurnFinish
                                             | SessionEventKind::Reset
                                     );
