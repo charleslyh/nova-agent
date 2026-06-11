@@ -87,7 +87,10 @@ impl AgentStreamHandler for SubStreamHandler {
                     self.capture_pending_if_nonempty();
                 }
                 AgentFinishKind::Canceled => {
-                    self.exit_error = Some("sub agent run canceled".into());
+                    self.capture_pending_if_nonempty();
+                    if self.final_text.is_none() {
+                        self.exit_error = Some("sub agent run canceled".into());
+                    }
                 }
                 AgentFinishKind::Refused { reason } => {
                     self.exit_error = Some(
@@ -508,5 +511,27 @@ mod tests {
         handler.on_event(&text_block("final summary"));
         handler.on_event(&completion_done());
         assert_eq!(handler.into_result(), Ok("final summary".into()));
+    }
+
+    #[test]
+    fn sub_handler_preserves_partial_text_on_cancel() {
+        let mut handler = SubStreamHandler::new();
+        handler.on_event(&text_block("partial result"));
+        handler.on_event(&AgentResponseEvent::Finished {
+            kind: AgentFinishKind::Canceled,
+        });
+        assert_eq!(handler.into_result(), Ok("partial result".into()));
+    }
+
+    #[test]
+    fn sub_handler_cancel_without_text_returns_error() {
+        let mut handler = SubStreamHandler::new();
+        handler.on_event(&AgentResponseEvent::Finished {
+            kind: AgentFinishKind::Canceled,
+        });
+        assert_eq!(
+            handler.into_result(),
+            Err("sub agent run canceled".into())
+        );
     }
 }
