@@ -1,7 +1,8 @@
 //! Session event transcripts: per-session persisted event log with subscribe, load, and write.
 //!
 //! Callers use [`SondaSessionTranscripts::new`] with a resolved `sessions` directory.
-//! On-disk layout is `{sessions_dir}/{session_id}/transcript.jsonl` (see [`jsonl`] backend).
+//! On-disk layout is `{sessions_dir}/{session_id}/transcript.jsonl` plus `output/` and
+//! `resources/` subdirs (see [`jsonl`] backend and [`crate::session_workspace`]).
 
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -16,6 +17,7 @@ use tokio::sync::mpsc;
 
 use super::jsonl::{self, JsonlError};
 use super::SondaSessionEventRecord;
+use crate::session_workspace::ensure_session_dirs;
 
 /// Transcript store errors (missing session, duplicate create, backend I/O).
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -220,6 +222,11 @@ impl SondaSessionTranscripts {
             return Err(SondaSessionTranscriptsError::AlreadyExists);
         }
         jsonl::create_transcript_file(&path).map_err(backend_err)?;
+        if let Some(session_dir) = path.parent() {
+            ensure_session_dirs(session_dir).map_err(|e| {
+                SondaSessionTranscriptsError::Message(format!("create session dirs: {e}"))
+            })?;
+        }
         Ok(())
     }
 

@@ -129,7 +129,7 @@ impl SondaToolboxFactory {
         let allowed_tools = self.settings_store.agent_allowed_tools(agent_id)?;
 
         let allow: HashSet<&str> = allowed_tools.iter().map(String::as_str).collect();
-        let session_dir = self.workspace.session_dir(session_id);
+        let tool_root = self.workspace.session_output_dir(session_id);
 
         let mut manifests = Vec::new();
         let mut tools = Vec::new();
@@ -137,7 +137,7 @@ impl SondaToolboxFactory {
             if allowed_tools.is_empty() || !allow.contains(reg.name) {
                 continue;
             }
-            let tool = (reg.build)(session_dir.clone());
+            let tool = (reg.build)(tool_root.clone());
             if tool.name() != reg.name {
                 return Err(InvalidContent::new(format!(
                     "tool builder for `{}` returned mismatched tool `{}`",

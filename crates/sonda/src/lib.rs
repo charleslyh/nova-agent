@@ -29,7 +29,8 @@ pub use session_catalog::{
     SondaSessionCatalog, SubAgentContextMode,
 };
 pub use session_workspace::{
-    SessionWorkspaceEntry, SessionWorkspacePath, SessionWorkspaceTree, SondaSessionWorkspace,
+    ensure_session_dirs, SessionWorkspaceEntry, SessionWorkspacePath, SessionWorkspaceTree,
+    SondaSessionWorkspace, SESSION_OUTPUT_DIR, SESSION_RESOURCES_DIR,
 };
 pub use session_factory::SondaSessionFactory;
 pub use settings_store::{

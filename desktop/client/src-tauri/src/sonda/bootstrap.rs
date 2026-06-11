@@ -115,19 +115,19 @@ fn tool_registrations(
 ) -> Vec<SondaToolRegistration> {
     let cli_envs = cli_subprocess_envs(cli_path, tools_catalog_path);
     vec![
-        SondaToolRegistration::new(FileReadTool::NAME, |session_dir| {
-            Arc::new(FileReadTool::new(session_dir))
+        SondaToolRegistration::new(FileReadTool::NAME, |tool_root| {
+            Arc::new(FileReadTool::new(tool_root))
         }),
-        SondaToolRegistration::new(FileWriteTool::NAME, |session_dir| {
-            Arc::new(FileWriteTool::new(session_dir))
+        SondaToolRegistration::new(FileWriteTool::NAME, |tool_root| {
+            Arc::new(FileWriteTool::new(tool_root))
         }),
         SondaToolRegistration::new(WebSearchTool::NAME, |_| Arc::new(WebSearchTool)),
         SondaToolRegistration::new(ImageCreateTool::NAME, |_| Arc::new(ImageCreateTool)),
-        SondaToolRegistration::new(ImageEditTool::NAME, |session_dir| {
-            Arc::new(ImageEditTool::new(session_dir))
+        SondaToolRegistration::new(ImageEditTool::NAME, |tool_root| {
+            Arc::new(ImageEditTool::new(tool_root))
         }),
-        SondaToolRegistration::new(ShellTool::NAME, move |session_dir| {
-            Arc::new(ShellTool::new(session_dir, cli_envs.clone()))
+        SondaToolRegistration::new(ShellTool::NAME, move |tool_root| {
+            Arc::new(ShellTool::new(tool_root, cli_envs.clone()))
         }),
     ]
 }

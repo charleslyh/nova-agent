@@ -1,4 +1,4 @@
-//! Per-session on-disk workspace paths, directory listing, and upload staging.
+//! Per-session on-disk layout: `output/` (artifacts), `resources/` (staged attachments), listing.
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -13,6 +13,11 @@ const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", 
 
 const TREE_MAX_DEPTH: usize = 8;
 const TREE_MAX_NODES: usize = 2000;
+
+/// Agent/tool artifact root: `{session_dir}/output/`.
+pub const SESSION_OUTPUT_DIR: &str = "output";
+/// User-staged turn resources (images, etc.): `{session_dir}/resources/`.
+pub const SESSION_RESOURCES_DIR: &str = "resources";
 
 /// Session disk workspace root: `{sessions_root}/{session_id}/`.
 #[derive(Debug, Clone)]
@@ -59,14 +64,27 @@ impl SondaSessionWorkspace {
         self.sessions_root.join(session_id)
     }
 
+    /// `{session_dir}/output` — tool cwd and UI workspace root.
+    pub fn session_output_dir(&self, session_id: &str) -> PathBuf {
+        self.session_dir(session_id).join(SESSION_OUTPUT_DIR)
+    }
+
+    /// `{session_dir}/resources` — staged user attachments per turn.
+    pub fn session_resources_dir(&self, session_id: &str) -> PathBuf {
+        self.session_dir(session_id).join(SESSION_RESOURCES_DIR)
+    }
+
     /// Absolute session workspace path for APIs and clients (`GET .../workspace/path`).
     pub fn session_workspace_path(&self, session_id: &str) -> SessionWorkspacePath {
         SessionWorkspacePath {
-            path: self.session_dir(session_id).to_string_lossy().to_string(),
+            path: self
+                .session_output_dir(session_id)
+                .to_string_lossy()
+                .to_string(),
         }
     }
 
-    /// Copy picker paths into `{session_dir}/uploads/` and return staged [`TurnResource`] rows.
+    /// Copy picker paths into `{session_dir}/resources/` and return staged [`TurnResource`] rows.
     pub async fn stage_session_images(
         &self,
         session_id: &str,
@@ -77,14 +95,14 @@ impl SondaSessionWorkspace {
         }
 
         let session_dir = self.session_dir(session_id);
-        let uploads_dir = session_dir.join("uploads");
+        let resources_dir = self.session_resources_dir(session_id);
         let session_id = session_id.to_string();
 
         tokio::task::spawn_blocking(move || {
             stage_session_images_blocking(
                 session_id,
                 session_dir,
-                uploads_dir,
+                resources_dir,
                 source_paths,
             )
         })
@@ -94,9 +112,25 @@ impl SondaSessionWorkspace {
         })?
     }
 
-    /// Recursively list files under the session workspace (depth and node caps apply).
+    /// Recursively list files under `{session_dir}/output` (depth and node caps apply).
     pub fn list_session_tree(&self, session_id: &str) -> Result<SessionWorkspaceTree> {
-        let root = self.session_dir(session_id);
+        let session_dir = self.session_dir(session_id);
+        if !session_dir.is_dir() {
+            return Err(FileIoError::new(
+                "read session workspace",
+                session_dir.clone(),
+                std::io::Error::new(std::io::ErrorKind::NotFound, "session directory not found"),
+            )
+            .into());
+        }
+
+        let root = self.session_output_dir(session_id);
+        if !root.is_dir() {
+            fs::create_dir_all(&root).map_err(|source| {
+                FileIoError::new("create session output dir", root.clone(), source)
+            })?;
+        }
+
         let path_str = root.to_string_lossy().to_string();
         let mut remaining_nodes = TREE_MAX_NODES;
         let entries = list_entries_recursive(&root, 0, &mut remaining_nodes)?;
@@ -108,18 +142,26 @@ impl SondaSessionWorkspace {
     }
 }
 
+/// Create `output/` and `resources/` under an existing session directory.
+pub fn ensure_session_dirs(session_dir: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(session_dir.join(SESSION_OUTPUT_DIR))?;
+    fs::create_dir_all(session_dir.join(SESSION_RESOURCES_DIR))?;
+    Ok(())
+}
+
 fn stage_session_images_blocking(
     session_id: String,
     session_dir: PathBuf,
-    uploads_dir: PathBuf,
+    resources_dir: PathBuf,
     source_paths: Vec<String>,
 ) -> Result<Vec<TurnResource>> {
     if !session_dir.is_dir() {
         return Err(InvalidContent::new(format!("unknown session: {session_id}")).into());
     }
 
-    fs::create_dir_all(&uploads_dir)
-        .map_err(|source| FileIoError::new("create uploads dir", uploads_dir.clone(), source))?;
+    fs::create_dir_all(&resources_dir).map_err(|source| {
+        FileIoError::new("create resources dir", resources_dir.clone(), source)
+    })?;
 
     let allowed_roots = allowed_stage_source_roots(&session_dir)?;
 
@@ -134,9 +176,9 @@ fn stage_session_images_blocking(
             .and_then(|e| e.to_str())
             .filter(|e| !e.is_empty())
             .unwrap_or("bin");
-        let dest = uploads_dir.join(format!("{}.{}", Uuid::new_v4(), ext));
+        let dest = resources_dir.join(format!("{}.{}", Uuid::new_v4(), ext));
         fs::copy(&src, &dest).map_err(|source| {
-            FileIoError::new("copy image into session uploads", dest.clone(), source)
+            FileIoError::new("copy image into session resources", dest.clone(), source)
         })?;
         staged.push(TurnResource::Image {
             path: dest.to_string_lossy().into_owned(),
@@ -215,7 +257,7 @@ fn is_allowed_image(path: &Path) -> bool {
 }
 
 fn should_skip_entry(name: &str) -> bool {
-    name == ".DS_Store" || name == "transcript.jsonl"
+    name == ".DS_Store"
 }
 
 fn list_entries_recursive(
@@ -295,11 +337,11 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn session_workspace_path_joins_sessions_root() {
+    fn session_workspace_path_points_at_output_dir() {
         let dir = tempdir().unwrap();
         let workspace = SondaSessionWorkspace::new(dir.path());
         let path = workspace.session_workspace_path("abc-123");
-        assert!(path.path.ends_with("abc-123"));
+        assert!(path.path.ends_with("abc-123/output"));
         assert!(path.path.starts_with(dir.path().to_string_lossy().as_ref()));
     }
 
@@ -348,21 +390,34 @@ mod tests {
     }
 
     #[test]
-    fn list_session_tree_skips_transcript_and_lists_files() {
+    fn list_session_tree_lists_output_only() {
         let dir = tempdir().unwrap();
         let workspace = SondaSessionWorkspace::new(dir.path());
         let session_dir = workspace.session_dir("sess-1");
         fs::create_dir_all(&session_dir).unwrap();
         fs::write(session_dir.join("transcript.jsonl"), "x").unwrap();
         fs::write(session_dir.join("note.txt"), "hi").unwrap();
-        fs::create_dir_all(session_dir.join("out")).unwrap();
-        fs::write(session_dir.join("out/a.md"), "#").unwrap();
+        let output_dir = session_dir.join(SESSION_OUTPUT_DIR);
+        fs::create_dir_all(&output_dir).unwrap();
+        fs::write(output_dir.join("note.txt"), "hi").unwrap();
+        fs::create_dir_all(output_dir.join("nested")).unwrap();
+        fs::write(output_dir.join("nested/a.md"), "#").unwrap();
 
         let tree = workspace.list_session_tree("sess-1").unwrap();
-        assert!(tree.path.ends_with("sess-1"));
+        assert!(tree.path.ends_with("sess-1/output"));
         let names: Vec<_> = tree.entries.iter().map(|e| e.name.as_str()).collect();
         assert!(!names.contains(&"transcript.jsonl"));
         assert!(names.contains(&"note.txt"));
-        assert!(names.contains(&"out"));
+        assert!(names.contains(&"nested"));
+    }
+
+    #[test]
+    fn ensure_session_dirs_creates_output_and_resources() {
+        let dir = tempdir().unwrap();
+        let session_dir = dir.path().join("sess-1");
+        fs::create_dir_all(&session_dir).unwrap();
+        ensure_session_dirs(&session_dir).unwrap();
+        assert!(session_dir.join(SESSION_OUTPUT_DIR).is_dir());
+        assert!(session_dir.join(SESSION_RESOURCES_DIR).is_dir());
     }
 }
