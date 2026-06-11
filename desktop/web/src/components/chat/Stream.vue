@@ -80,12 +80,19 @@
               </div>
             </div>
           </template>
-        </div>
 
-        <div v-if="showTurnPending(turnIndex)" class="turn-progress" aria-label="生成中">
-          <span class="turn-progress-dot" />
-          <span class="turn-progress-dot" />
-          <span class="turn-progress-dot" />
+          <div
+            v-if="showTurnPending(turnIndex)"
+            class="msg-row msg-row--assistant msg-row--pending"
+          >
+            <div class="msg-row-body">
+              <div class="turn-progress" aria-label="生成中">
+                <span class="turn-progress-dot" />
+                <span class="turn-progress-dot" />
+                <span class="turn-progress-dot" />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -512,11 +519,16 @@ watch(
   overflow-wrap: anywhere;
 }
 
+.msg-row--pending {
+  margin-top: -4px;
+  margin-bottom: 4px;
+}
+
 .turn-progress {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 0 0 10px 2px;
+  padding: 2px 0 4px;
 }
 
 .turn-progress-dot {
