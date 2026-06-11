@@ -2648,6 +2648,7 @@ dependencies = [
  "moray-extensions",
  "moray-session",
  "moray-skillhub",
+ "moray-skills",
  "moray-sonda",
  "nu-ansi-term",
  "rustls",
@@ -2705,6 +2706,7 @@ dependencies = [
  "moray-channels",
  "moray-core",
  "moray-session",
+ "moray-skills",
  "regex",
  "reqwest 0.12.28",
  "serde",
@@ -2750,6 +2752,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "moray-skills"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml 0.8.2",
+ "tracing",
+]
+
+[[package]]
 name = "moray-sonda"
 version = "0.1.0"
 dependencies = [
@@ -2758,9 +2771,9 @@ dependencies = [
  "futures",
  "moray-channels",
  "moray-core",
- "moray-extensions",
  "moray-session",
  "moray-skillhub",
+ "moray-skills",
  "parking_lot",
  "serde",
  "serde_json",

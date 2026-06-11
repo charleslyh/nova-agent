@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use super::Skill;
+use crate::Skill;
 
 #[derive(Debug, Error)]
 pub enum SkillsLoadError {
@@ -61,7 +61,7 @@ pub fn load_skill_from_dir(dir: &Path) -> Result<Skill, SkillsLoadError> {
 
 /// Load a skill from `SKILL.md` (YAML front matter + markdown body).
 pub fn load_skill_md(path: &Path, dir: &Path) -> Result<Skill, SkillsLoadError> {
-    let content = fs::read_to_string(path).map_err(|e| SkillsLoadError::Io(e))?;
+    let content = fs::read_to_string(path)?;
     let (fm, body) = parse_front_matter(&content);
 
     let mut name = dir
@@ -99,7 +99,7 @@ pub fn load_skill_md(path: &Path, dir: &Path) -> Result<Skill, SkillsLoadError> 
 
 /// Load a skill from `SKILL.toml`.
 pub fn load_skill_toml(path: &Path) -> Result<Skill, SkillsLoadError> {
-    let content = fs::read_to_string(path).map_err(|e| SkillsLoadError::Io(e))?;
+    let content = fs::read_to_string(path)?;
     let manifest: SkillManifestFile = toml::from_str(&content).map_err(|e| SkillsLoadError::Parse {
         path: path.to_path_buf(),
         message: e.to_string(),

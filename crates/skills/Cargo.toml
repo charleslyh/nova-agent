@@ -1,0 +1,20 @@
+[package]
+name = "moray-skills"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Agent skill types and on-disk SKILL.md / SKILL.toml loading"
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1.0.219", features = ["derive"], optional = true }
+thiserror = "2.0.12"
+toml = "0.8"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

@@ -488,12 +488,11 @@ mod tests {
     use futures::Stream;
     use moray_core::{
         ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,
-        ChatCompletionResponseChunk, MorayError, ToolCallAuthorizer, ToolCallResponder,
-        ToolManifest,
+        ChatCompletionResponseChunk, ContextEngine, MorayError, Tool, ToolCallAuthorizer,
+        ToolCallResponder, ToolManifest,
     };
     use serde_json::Value;
     use crate::{ContextBuilder, SondaCompletionRegistration};
-    use moray_extensions::context::CompositeContextEngineBuilder;
     use crate::transcripts::SondaSessionTranscripts;
     use tempfile::tempdir;
 
@@ -505,11 +504,6 @@ mod tests {
     use crate::skill_center::{SkillCenter, SkillDirKind, SkillDirSource};
     use crate::toolbox_factory::{SondaToolRegistration, SondaToolboxFactory};
     use crate::SondaToolCatalog;
-    use moray_extensions::tools::{
-        CalcTool, FileReadTool, FileWriteTool, ImageCreateTool, ImageEditTool, ShellTool,
-        WebFetchTool, WebSearchTool,
-    };
-    use moray_core::TypedTool;
 
     use super::*;
 
@@ -568,14 +562,63 @@ mod tests {
         }
     }
 
+    struct StubContextEngine {
+        messages: Vec<ChatCompletionRequestMessage>,
+    }
+
+    #[async_trait]
+    impl ContextEngine for StubContextEngine {
+        async fn setup(
+            &self,
+            _tools: &[ToolManifest],
+        ) -> std::result::Result<(), MorayError> {
+            Ok(())
+        }
+
+        async fn assemble(
+            &self,
+            _tools: &[ToolManifest],
+        ) -> std::result::Result<Vec<ChatCompletionRequestMessage>, MorayError> {
+            Ok(self.messages.clone())
+        }
+
+        async fn ingest(
+            &self,
+            _messages: Vec<ChatCompletionRequestMessage>,
+        ) -> std::result::Result<(), MorayError> {
+            Ok(())
+        }
+
+        async fn teardown(&self) -> std::result::Result<(), MorayError> {
+            Ok(())
+        }
+
+        async fn clear(&self) -> std::result::Result<(), MorayError> {
+            Ok(())
+        }
+    }
+
     fn testing_context_builder() -> ContextBuilder {
         Arc::new(|_agent_id, messages| {
-            Ok(Arc::new(
-                CompositeContextEngineBuilder::new()
-                    .messages(messages)
-                    .build(),
-            ))
+            Ok(Arc::new(StubContextEngine { messages }) as Arc<dyn ContextEngine>)
         })
+    }
+
+    struct StubTool(&'static str);
+
+    #[async_trait]
+    impl Tool for StubTool {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+
+        async fn call(
+            &self,
+            _args: Value,
+            _responder: &dyn ToolCallResponder,
+        ) -> std::result::Result<(), MorayError> {
+            Ok(())
+        }
     }
 
     fn build_test_sonda(server_path: &Path, sessions_path: &Path) -> crate::error::Result<()> {
@@ -1115,19 +1158,22 @@ parameters = '{}'
         ]
     }
 
-    fn testing_registrations(shell_env: Vec<(String, String)>) -> Vec<SondaToolRegistration> {
-        vec![
-            SondaToolRegistration::new(CalcTool::NAME, |_| Arc::new(CalcTool)),
-            SondaToolRegistration::new(ShellTool::NAME, move |dir| {
-                Arc::new(ShellTool::new(dir, shell_env.clone()))
-            }),
-            SondaToolRegistration::new(FileReadTool::NAME, |dir| Arc::new(FileReadTool::new(dir))),
-            SondaToolRegistration::new(FileWriteTool::NAME, |dir| Arc::new(FileWriteTool::new(dir))),
-            SondaToolRegistration::new(WebFetchTool::NAME, |_| Arc::new(WebFetchTool)),
-            SondaToolRegistration::new(WebSearchTool::NAME, |_| Arc::new(WebSearchTool)),
-            SondaToolRegistration::new(ImageCreateTool::NAME, |_| Arc::new(ImageCreateTool)),
-            SondaToolRegistration::new(ImageEditTool::NAME, |dir| Arc::new(ImageEditTool::new(dir))),
-        ]
+    const TESTING_TOOL_NAMES: &[&str] = &[
+        "calc",
+        "shell",
+        "file_read",
+        "file_write",
+        "web_fetch",
+        "web_search",
+        "image_create",
+        "image_edit",
+    ];
+
+    fn testing_registrations(_shell_env: Vec<(String, String)>) -> Vec<SondaToolRegistration> {
+        TESTING_TOOL_NAMES
+            .iter()
+            .map(|&name| SondaToolRegistration::new(name, |_| Arc::new(StubTool(name))))
+            .collect()
     }
 
     fn testing_toolbox_factory(

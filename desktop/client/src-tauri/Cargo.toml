@@ -49,5 +49,6 @@ path = "tests/integration.rs"
 
 [dev-dependencies]
 moray-extensions.workspace = true
+moray-skills.workspace = true
 serde_json = "1.0.140"
 tempfile = "3"

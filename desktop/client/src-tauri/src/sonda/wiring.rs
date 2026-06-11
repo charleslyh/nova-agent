@@ -8,9 +8,9 @@ use moray_extensions::completions::{Endpoint, OpenAIChatCompletion};
 use moray_extensions::context::CompositeContextEngineBuilder;
 use moray_extensions::preambles::{SkillsSection, TemplatedPreamblerBuilder};
 use moray_sonda::{
-    BadEnvironmentVariable, ContextBuilder, InvalidContent, SkillCenter,
-    SkillFilterKind, SondaCompletionRegistration, SondaError, SondaSettingsCompletionEntry,
-    SondaSettingsStore, RUN_SUB_AGENT_TOOL_NAME,
+    BadEnvironmentVariable, ContextBuilder, InvalidContent, SkillCenter, SkillFilterKind,
+    SondaCompletionRegistration, SondaError, SondaSettingsCompletionEntry, SondaSettingsStore,
+    RUN_SUB_AGENT_TOOL_NAME,
 };
 use serde::Deserialize;
 

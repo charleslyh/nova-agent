@@ -225,7 +225,7 @@ fn session_transcript_path(session_id: &str) -> PathBuf {
 
 #[test]
 fn bundled_skills_load_from_client_resources() {
-    use moray_extensions::skills::load_skills_from_dir;
+    use moray_skills::load_skills_from_dir;
 
     let skills_dir = bundled_skills_dir();
     let loaded = load_skills_from_dir(&skills_dir).expect("load skills");

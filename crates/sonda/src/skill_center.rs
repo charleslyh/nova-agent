@@ -15,10 +15,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-use moray_extensions::skills::{load_skill_from_dir, load_skills_from_dir, Skill};
+use moray_skills::{load_skill_from_dir, load_skills_from_dir};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{InvalidContent, Result};
+
+pub use moray_skills::Skill;
 
 #[derive(Debug, thiserror::Error)]
 pub enum UnregisterSkillError {
@@ -616,4 +618,5 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["a", "c"]);
     }
+
 }

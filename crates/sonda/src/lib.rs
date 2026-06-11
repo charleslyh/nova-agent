@@ -40,7 +40,7 @@ pub use settings_store::{
     SondaSettingsStoreError,
 };
 pub use skill_center::{
-    SkillCatalogEntry, SkillCenter, SkillDetailEntry, SkillDirKind, SkillDirSource,
+    Skill, SkillCatalogEntry, SkillCenter, SkillDetailEntry, SkillDirKind, SkillDirSource,
     SkillFilterKind, UnregisterSkillError,
 };
 pub use snapshot::{SondaSnapshot, SondaStateEvent};

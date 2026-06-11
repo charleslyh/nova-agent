@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/core",
     "crates/session",
+    "crates/skills",
     "crates/extensions",
     "crates/channels",
     "crates/skillhub",
@@ -19,6 +20,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 moray-core = { path = "crates/core" }
 moray-session = { path = "crates/session" }
+moray-skills = { path = "crates/skills" }
 moray-extensions = { path = "crates/extensions" }
 moray-channels = { path = "crates/channels" }
 moray-skillhub = { path = "crates/skillhub" }
