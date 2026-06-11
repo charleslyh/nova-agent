@@ -81,7 +81,12 @@ impl SondaSessionWorkspace {
         let session_id = session_id.to_string();
 
         tokio::task::spawn_blocking(move || {
-            stage_session_images_blocking(session_id, session_dir, uploads_dir, source_paths)
+            stage_session_images_blocking(
+                session_id,
+                session_dir,
+                uploads_dir,
+                source_paths,
+            )
         })
         .await
         .map_err(|err| {
@@ -116,9 +121,11 @@ fn stage_session_images_blocking(
     fs::create_dir_all(&uploads_dir)
         .map_err(|source| FileIoError::new("create uploads dir", uploads_dir.clone(), source))?;
 
+    let allowed_roots = allowed_stage_source_roots(&session_dir)?;
+
     let mut staged = Vec::with_capacity(source_paths.len());
     for source in source_paths {
-        let src = resolve_stage_source_path(&source)?;
+        let src = resolve_stage_source_path(&source, &allowed_roots)?;
         if !is_allowed_image(&src) {
             return Err(InvalidContent::new(format!("unsupported image type: {source}")).into());
         }
@@ -139,7 +146,43 @@ fn stage_session_images_blocking(
     Ok(staged)
 }
 
-fn resolve_stage_source_path(source: &str) -> Result<PathBuf> {
+fn allowed_stage_source_roots(session_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut roots = Vec::new();
+    if session_dir.is_dir() {
+        roots.push(
+            fs::canonicalize(session_dir).map_err(|_| {
+                InvalidContent::new(format!(
+                    "session workspace not accessible: {}",
+                    session_dir.display()
+                ))
+            })?,
+        );
+    }
+    if let Some(home) = std::env::home_dir() {
+        if let Ok(canonical) = fs::canonicalize(&home) {
+            roots.push(canonical);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let volumes = Path::new("/Volumes");
+        if volumes.is_dir() {
+            if let Ok(canonical) = fs::canonicalize(volumes) {
+                roots.push(canonical);
+            }
+        }
+    }
+    if roots.is_empty() {
+        return Err(InvalidContent::new("no allowed stage source roots configured").into());
+    }
+    Ok(roots)
+}
+
+fn is_under_allowed_roots(path: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| path.starts_with(root))
+}
+
+fn resolve_stage_source_path(source: &str, allowed_roots: &[PathBuf]) -> Result<PathBuf> {
     let source = source.trim();
     if source.is_empty() {
         return Err(InvalidContent::new("empty source path").into());
@@ -155,6 +198,11 @@ fn resolve_stage_source_path(source: &str) -> Result<PathBuf> {
     })?;
     if !canonical.is_file() {
         return Err(InvalidContent::new(format!("not a file: {source}")).into());
+    }
+    if !is_under_allowed_roots(&canonical, allowed_roots) {
+        return Err(
+            InvalidContent::new(format!("source path outside allowed scope: {source}")).into(),
+        );
     }
     Ok(canonical)
 }
@@ -267,6 +315,36 @@ mod tests {
         assert!(is_allowed_image(Path::new("/tmp/a.PNG")));
         assert!(is_allowed_image(Path::new("/tmp/photo.jpeg")));
         assert!(!is_allowed_image(Path::new("/tmp/doc.pdf")));
+    }
+
+    #[test]
+    fn resolve_stage_source_path_rejects_paths_outside_allowed_roots() {
+        let dir = tempdir().unwrap();
+        let session_dir = dir.path().join("sess-1");
+        fs::create_dir_all(&session_dir).unwrap();
+        let allowed = allowed_stage_source_roots(&session_dir).unwrap();
+        let outside = Path::new("/etc/hosts");
+        if outside.is_file() {
+            assert!(resolve_stage_source_path(
+                outside.to_string_lossy().as_ref(),
+                &allowed
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn resolve_stage_source_path_accepts_file_under_session_dir() {
+        let dir = tempdir().unwrap();
+        let session_dir = dir.path().join("sess-1");
+        fs::create_dir_all(&session_dir).unwrap();
+        let image = session_dir.join("photo.png");
+        fs::write(&image, b"png").unwrap();
+        let allowed = allowed_stage_source_roots(&session_dir).unwrap();
+        let resolved =
+            resolve_stage_source_path(image.to_string_lossy().as_ref(), &allowed).unwrap();
+        assert!(resolved.is_file());
+        assert!(is_allowed_image(&resolved));
     }
 
     #[test]
