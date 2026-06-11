@@ -22,6 +22,9 @@ pub trait ContextEngine: Send + Sync {
     async fn clear(&self) -> Result<(), MorayError>;
 
     /// Returns a copy of ingested transcript messages when supported.
+    ///
+    /// Intentionally synchronous: implementations are expected to use in-process
+    /// locks (e.g. `std::sync::RwLock`) rather than async runtime primitives.
     fn snapshot(&self) -> Option<Vec<ChatCompletionRequestMessage>> {
         None
     }

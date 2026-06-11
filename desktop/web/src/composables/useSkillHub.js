@@ -24,7 +24,7 @@ export function useSkillHub(client) {
     }, query.trim() ? 300 : 0);
   }
 
-  async function loadHubRecommendations() {
+  function loadHubRecommendations() {
     return runHubSearch("");
   }
 

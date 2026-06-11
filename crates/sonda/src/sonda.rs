@@ -317,17 +317,11 @@ impl Sonda {
         let session_id = require_nonempty_trimmed(session_id, "session_id")?;
         let leader_agent_id = require_nonempty_trimmed(leader_agent_id, "leader_agent_id")?;
         let sub_agents = normalize_sub_agents(&sub_agents)?;
-        ensure_known_agent(&self.settings_store, &leader_agent_id)?;
-
-        for entry in &sub_agents {
-            ensure_known_agent(&self.settings_store, entry.agent_id.as_str())?;
-            if entry.agent_id == leader_agent_id {
-                return Err(InvalidContent::new(
-                    "sub_agents must not include the leader agent id",
-                )
-                .into());
-            }
-        }
+        ensure_session_agents_known(
+            &self.settings_store,
+            leader_agent_id.as_str(),
+            sub_agents.as_slice(),
+        )?;
 
         self.session_catalog.set_session_agents(
             &session_id,
@@ -628,6 +622,29 @@ fn validate_dependencies(
 fn create_authorizer() -> Arc<dyn ToolCallAuthorizer> {
     // TODO: select implementation from settings when auth profiles land in TOML.
     Arc::new(AlwaysAsking::with_auto_allow([RUN_SUB_AGENT_TOOL_NAME]))
+}
+
+fn ensure_session_agents_known(
+    settings_store: &SondaSettingsStore,
+    leader_agent_id: &str,
+    sub_agents: &[SessionSubAgentEntry],
+) -> Result<()> {
+    ensure_known_agent(settings_store, leader_agent_id)?;
+
+    let mut checked = std::collections::HashSet::with_capacity(sub_agents.len());
+    for entry in sub_agents {
+        if entry.agent_id == leader_agent_id {
+            return Err(InvalidContent::new(
+                "sub_agents must not include the leader agent id",
+            )
+            .into());
+        }
+        if checked.insert(entry.agent_id.as_str()) {
+            ensure_known_agent(settings_store, entry.agent_id.as_str())?;
+        }
+    }
+
+    Ok(())
 }
 
 fn ensure_known_agent(settings_store: &SondaSettingsStore, agent_id: &str) -> Result<()> {

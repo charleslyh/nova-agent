@@ -93,6 +93,7 @@
 
           <div class="content-body">
             <div v-if="selectedNavId === 'agents'" class="agents-panel">
+              <p v-if="createAgentError" class="error">{{ createAgentError }}</p>
               <div class="agents-toolbar">
                 <button type="button" class="agents-create-btn" @click="startCreateAgent">
                   新建 Agent
@@ -263,7 +264,7 @@
     <AgentEditDialog
       :open="editOpen"
       :agent="editingAgent"
-      :completions="settingsCatalog.completions"
+      :completions="settingsCatalog?.completions ?? []"
       :available-tools="availableTools"
       :save-agent="saveAgent"
       :delete-agent="deleteAgent"
@@ -359,6 +360,7 @@ const skillDetailError = ref("");
 const skillsSubTab = ref("installed");
 const uninstallingSkillId = ref(null);
 const uninstallError = ref("");
+const createAgentError = ref("");
 const pendingUninstallSkill = ref(null);
 
 const inSkillDetail = computed(() => viewingSkillId.value != null);
@@ -475,12 +477,12 @@ function closeSkillDetail() {
 }
 
 function completionName(id) {
-  const c = props.settingsCatalog.completions.find((x) => x.id === id);
+  const c = props.settingsCatalog?.completions?.find((x) => x.id === id);
   return c?.name ?? id;
 }
 
 function openEdit(agent) {
-  const fresh = props.settingsCatalog.agents.find((a) => a.id === agent.id);
+  const fresh = props.settingsCatalog?.agents?.find((a) => a.id === agent.id);
   editingAgent.value = fresh ? { ...fresh } : { ...agent };
   editOpen.value = true;
 }
@@ -491,8 +493,12 @@ function closeEdit() {
 }
 
 async function startCreateAgent() {
-  const completionId = props.settingsCatalog.completions[0]?.id;
-  if (!completionId) return;
+  const completionId = props.settingsCatalog?.completions?.[0]?.id;
+  if (!completionId) {
+    createAgentError.value = "未配置可用模型，无法创建 Agent";
+    return;
+  }
+  createAgentError.value = "";
   try {
     await props.createAgent({
       name: "新 Agent",
@@ -502,6 +508,7 @@ async function startCreateAgent() {
       desc: null
     });
   } catch (e) {
+    createAgentError.value = e?.message || "创建 Agent 失败";
     console.error(e);
   }
 }

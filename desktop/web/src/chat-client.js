@@ -182,16 +182,21 @@ export async function createHttpChatClient() {
     },
 
     async createAgent({ name, completion_id: completionId, allowed_tools: allowedTools, character, desc }) {
-      return await request(`${baseUrl}/settings/agents`, {
-        method: "POST",
-        body: jsonRequestBody({
-          name,
-          completion_id: completionId,
-          allowed_tools: allowedTools ?? [],
-          character: character ?? null,
-          desc: desc ?? null
-        })
-      });
+      try {
+        return await request(`${baseUrl}/settings/agents`, {
+          method: "POST",
+          body: jsonRequestBody({
+            name,
+            completion_id: completionId,
+            allowed_tools: allowedTools ?? [],
+            character: character ?? null,
+            desc: desc ?? null
+          })
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`create agent failed: ${message}`);
+      }
     },
 
     async deleteAgent(agentId) {

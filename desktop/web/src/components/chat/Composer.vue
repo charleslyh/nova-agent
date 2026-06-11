@@ -1,5 +1,6 @@
 <template>
   <footer class="composer-shell">
+    <p v-if="pickError" class="composer-error" role="alert">{{ pickError }}</p>
     <form class="composer" @submit.prevent="onFormSubmit">
       <div v-if="attachments.length" class="composer-attachments" aria-label="待发送图片">
         <div
@@ -135,6 +136,7 @@ const buttonState = computed(() => {
 const primaryLabel = computed(() => (isRunning.value ? "停止" : "发送"));
 
 const imeComposing = ref(false);
+const pickError = ref("");
 
 const IMAGE_FILTER = {
   name: "Images",
@@ -151,6 +153,7 @@ function onCompositionEnd() {
 
 async function onPickImages() {
   if (isRunning.value || attachAtLimit.value) return;
+  pickError.value = "";
   try {
     const selected = await open({
       multiple: true,
@@ -163,6 +166,7 @@ async function onPickImages() {
       emit("add-attachments", normalized);
     }
   } catch (error) {
+    pickError.value = error?.message || "打开图片选择器失败";
     console.error("image picker failed", error);
   }
 }
@@ -194,6 +198,12 @@ function onEnter(event) {
 <style scoped>
 .composer-shell {
   margin-top: 8px;
+}
+
+.composer-error {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #b42318;
 }
 
 .composer {

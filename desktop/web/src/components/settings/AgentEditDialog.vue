@@ -12,6 +12,7 @@
         <button type="button" class="close-btn" @click="$emit('close')">关闭</button>
       </header>
       <div class="body">
+        <p v-if="actionError" class="action-error" role="alert">{{ actionError }}</p>
         <label class="field">
           <span>名称</span>
           <input
@@ -92,6 +93,40 @@
         </button>
       </footer>
     </div>
+
+    <div
+      v-if="deleteConfirmOpen"
+      class="confirm-overlay"
+      role="alertdialog"
+      aria-labelledby="agent-delete-confirm-title"
+      aria-describedby="agent-delete-confirm-desc"
+      @click.self="deleteConfirmOpen = false"
+    >
+      <div class="confirm-panel">
+        <p id="agent-delete-confirm-title" class="confirm-title">删除 Agent</p>
+        <p id="agent-delete-confirm-desc" class="confirm-desc">
+          确定删除 Agent「{{ agent?.name }}」？此操作不可撤销。
+        </p>
+        <div class="confirm-actions">
+          <button
+            type="button"
+            class="confirm-btn confirm-btn--ghost"
+            :disabled="deleting"
+            @click="deleteConfirmOpen = false"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            class="confirm-btn confirm-btn--danger"
+            :disabled="deleting"
+            @click="executeDelete"
+          >
+            {{ deleting ? "删除中…" : "删除" }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -124,6 +159,9 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["close"]);
+
+const actionError = ref("");
+const deleteConfirmOpen = ref(false);
 
 const completionOptions = computed(() =>
   props.completions.map((c) => ({ value: c.id, label: c.name }))
@@ -169,6 +207,8 @@ watch(
   () => [props.open, props.agent?.id],
   () => {
     if (!props.open || !props.agent) return;
+    actionError.value = "";
+    deleteConfirmOpen.value = false;
     resetDraftFromAgent();
   },
   { immediate: true }
@@ -209,6 +249,7 @@ const saveDisabled = computed(
 
 async function onSave() {
   if (!props.agent || saveDisabled.value) return;
+  actionError.value = "";
   saving.value = true;
   try {
     await props.saveAgent({
@@ -221,20 +262,29 @@ async function onSave() {
     });
     emit("close");
   } catch (e) {
+    actionError.value = e?.message || "保存 Agent 失败";
     console.error(e);
   } finally {
     saving.value = false;
   }
 }
 
-async function onDelete() {
+function onDelete() {
   if (!props.agent?.id || !props.deleteAgent || deleting.value) return;
-  if (!window.confirm(`确定删除 Agent「${props.agent.name}」？`)) return;
+  actionError.value = "";
+  deleteConfirmOpen.value = true;
+}
+
+async function executeDelete() {
+  if (!props.agent?.id || !props.deleteAgent || deleting.value) return;
   deleting.value = true;
+  actionError.value = "";
   try {
     await props.deleteAgent(props.agent.id);
+    deleteConfirmOpen.value = false;
     emit("close");
   } catch (e) {
+    actionError.value = e?.message || "删除 Agent 失败";
     console.error(e);
   } finally {
     deleting.value = false;
@@ -437,5 +487,73 @@ async function onDelete() {
 .save-btn:disabled {
   background: #a6aab3;
   cursor: not-allowed;
+}
+
+.action-error {
+  margin: 0;
+  font-size: 13px;
+  color: #b42318;
+}
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.confirm-panel {
+  width: min(360px, 100%);
+  padding: 20px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+}
+
+.confirm-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.confirm-desc {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: #444;
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm-btn {
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.confirm-btn--ghost {
+  border: 1px solid #d5d5d9;
+  background: #fff;
+  color: #333;
+}
+
+.confirm-btn--danger {
+  border: none;
+  background: #b42318;
+  color: #fff;
 }
 </style>

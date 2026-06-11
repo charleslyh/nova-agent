@@ -17,11 +17,11 @@
                 {{ turn.user.text }}
               </div>
               <div
-                v-if="userImageResources(turn.user).length"
+                v-if="userImageResources(turn.user, props.sessionDir).length"
                 class="user-images"
               >
                 <img
-                  v-for="(img, imgIndex) in userImageResources(turn.user)"
+                  v-for="(img, imgIndex) in userImageResources(turn.user, props.sessionDir)"
                   :key="`${turn.user.id}-img-${imgIndex}`"
                   class="user-images__img"
                   :src="img.src"
@@ -156,14 +156,13 @@ function hasUserText(user) {
   return user && hasVisibleAssistantText(user.text);
 }
 
-function userImageResources(user) {
+function userImageResources(user, sessionDir) {
   if (!user || !Array.isArray(user.resources)) return [];
-  const sessionDir =
-    typeof props.sessionDir === "string" ? props.sessionDir.trim() : "";
+  const dir = typeof sessionDir === "string" ? sessionDir.trim() : "";
   return user.resources
     .filter((r) => r?.kind === "image" && typeof r.path === "string")
     .map((r) => {
-      const src = resolveUserImageSrc(r.path, sessionDir);
+      const src = resolveUserImageSrc(r.path, dir);
       return src ? { path: r.path, src } : null;
     })
     .filter(Boolean);
