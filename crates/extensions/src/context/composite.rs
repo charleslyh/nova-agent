@@ -256,7 +256,7 @@ mod tests {
             .preamble(Arc::new(
                 TemplatedPreamblerBuilder::new()
                     .template("## Character\n\n{{character}}\n")
-                    .with_string("character", "test")
+                    .subst("character", "test")
                     .build(),
             ))
             .build();
@@ -397,7 +397,7 @@ mod tests {
         let preambler = Arc::new(
             TemplatedPreamblerBuilder::new()
                 .template("## Character\n\n{{character}}\n")
-                .with_fn("character", move || current_in_fn.read().expect("lock").clone())
+                .subst_dyn("character", move || current_in_fn.read().expect("lock").clone())
                 .build(),
         );
         let engine = CompositeContextEngineBuilder::new()

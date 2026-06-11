@@ -295,7 +295,7 @@ fn build_sub_context(
     // 3. turn 继续，模型推理出要执行 sub agent A (by run_sub_agent tool), with 'task'
     // 那么，此时 sub agent A 的上下文应该是 C0 + t1 + r1 + task
     //
-    // with_fn 是为了给 session 的 leader context 一次设置、多次动态决议用的。而这里的 build_sub_context 一定是
+    // subst_dyn("character", …) 是为了给 session 的 leader context 一次设置、多次动态决议用的。而这里的 build_sub_context 一定是
     // 当前 turn 的即时消费。因此没必要再考虑二次动态决议的问题。相对“静态”更高效
 
     let character = settings_store
@@ -307,7 +307,7 @@ fn build_sub_context(
     let skill_center = skill_center.clone();
     let preambler = TemplatedPreamblerBuilder::default()
         .template(settings_store.preamble_template())
-        .with_string("character", character)
+        .subst("character", character)
         .section(SkillsSection::new(move || skill_center.skills(SkillFilterKind::All)))
         .build();
 

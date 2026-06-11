@@ -59,7 +59,7 @@ impl SondaSessionFactory {
 
         let preambler = TemplatedPreamblerBuilder::default()
             .template(preamble_template)
-            .with_fn("character", move || {
+            .subst_dyn("character", move || {
                 // Re-read the session's agent on every run: the user may change it in Settings
                 // mid-session; the value is frozen for that run when the context engine runs setup.
                 let agent_id = match session_catalog.get_session_agent_id(session_id.as_str()) {

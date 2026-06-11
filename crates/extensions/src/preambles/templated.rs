@@ -1,57 +1,27 @@
 //! Template-based system prompt provider.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Mutex;
 
 use moray_core::{ChatCompletionRequestMessage, MorayError, ToolManifest};
 
 use crate::context::PreambleProvider;
 use crate::preambles::PreambleSection;
 
-/// Resolves one template placeholder at render time (`{{key}}`).
-pub trait PreambleKeyPred: Send + Sync {
-    fn resolve(&self) -> String;
-}
-
-/// Bridges a `FnMut` closure into [`PreambleKeyPred`].
-struct PreambleSubstitutionFn {
-    inner: Mutex<Box<dyn FnMut() -> String + Send>>,
-}
-
-impl PreambleSubstitutionFn {
-    fn new<F>(f: F) -> Self
-    where
-        F: FnMut() -> String + Send + 'static,
-    {
-        Self {
-            inner: Mutex::new(Box::new(f)),
-        }
-    }
-}
-
-impl PreambleKeyPred for PreambleSubstitutionFn {
-    fn resolve(&self) -> String {
-        match self.inner.lock() {
-            Ok(mut f) => f(),
-            Err(_) => String::new(),
-        }
-    }
-}
-
 /// Hard-coded system prompt template + [`PreambleProvider`] implementation.
 pub struct TemplatedPreambler {
     template: String,
-    sub_values: BTreeMap<String, String>,
-    sub_preds: BTreeMap<String, Arc<dyn PreambleKeyPred>>,
-    sections: Vec<Arc<dyn PreambleSection>>,
+    subs: BTreeMap<String, String>,
+    subs_dyn: BTreeMap<String, Mutex<Box<dyn FnMut() -> String + Send>>>,
+    sections: Vec<Box<dyn PreambleSection>>,
 }
 
 impl std::fmt::Debug for TemplatedPreambler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TemplatedPreambler")
             .field("template_len", &self.template.len())
-            .field("values", &self.sub_values)
-            .field("pred_count", &self.sub_preds.len())
+            .field("sub_count", &self.subs.len())
+            .field("sub_dyn_count", &self.subs_dyn.len())
             .field("section_count", &self.sections.len())
             .finish()
     }
@@ -60,9 +30,9 @@ impl std::fmt::Debug for TemplatedPreambler {
 #[derive(Default)]
 pub struct TemplatedPreamblerBuilder {
     template: Option<String>,
-    values: BTreeMap<String, String>,
-    preds: BTreeMap<String, Arc<dyn PreambleKeyPred>>,
-    sections: Vec<Arc<dyn PreambleSection>>,
+    subs: BTreeMap<String, String>,
+    subs_dyn: BTreeMap<String, Mutex<Box<dyn FnMut() -> String + Send>>>,
+    sections: Vec<Box<dyn PreambleSection>>,
 }
 
 impl TemplatedPreamblerBuilder {
@@ -75,58 +45,61 @@ impl TemplatedPreamblerBuilder {
         self
     }
 
-    pub fn with_string(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.values.insert(key.into(), value.into());
+    /// Bind `{{key}}` to a static value.
+    pub fn subst(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.subs.insert(key.into(), value.into());
         self
     }
 
-    pub fn with_pred(
-        mut self,
-        key: impl Into<String>,
-        pred: Arc<dyn PreambleKeyPred>,
-    ) -> Self {
-        self.preds.insert(key.into(), pred);
-        self
-    }
-
-    pub fn with_fn<F>(mut self, key: impl Into<String>, f: F) -> Self
+    /// Bind `{{key}}` to a closure; re-evaluated on each render.
+    pub fn subst_dyn<F>(mut self, key: impl Into<String>, f: F) -> Self
     where
         F: FnMut() -> String + Send + 'static,
     {
-        self.preds
-            .insert(key.into(), Arc::new(PreambleSubstitutionFn::new(f)));
+        self.subs_dyn
+            .insert(key.into(), Mutex::new(Box::new(f)));
         self
     }
 
     pub fn section(mut self, section: impl PreambleSection + 'static) -> Self {
-        self.sections.push(Arc::new(section));
+        self.sections.push(Box::new(section));
         self
     }
 
     pub fn build(self) -> TemplatedPreambler {
         TemplatedPreambler {
             template: self.template.unwrap_or_default(),
-            sub_values: self.values,
-            sub_preds: self.preds,
+            subs: self.subs,
+            subs_dyn: self.subs_dyn,
             sections: self.sections,
         }
     }
 }
 
 impl TemplatedPreambler {
-    /// Resolve template, dynamic preds, and sections (used by [`PreambleProvider::generate`]).
+    /// Resolve template placeholders and sections (used by [`PreambleProvider::generate`]).
     pub fn render(&self) -> String {
         let mut preamble = self.template.clone();
 
-        for (key, value) in &self.sub_values {
-            Self::replace(&mut preamble, key, value);
+        let keys = self
+            .subs
+            .keys()
+            .chain(self.subs_dyn.keys())
+            .collect::<BTreeSet<_>>();
+
+        for key in keys {
+            let value = if let Some(f) = self.subs_dyn.get(key) {
+                match f.lock() {
+                    Ok(mut f) => f(),
+                    Err(_) => String::new(),
+                }
+            } else {
+                self.subs.get(key).cloned().unwrap_or_default()
+            };
+            Self::replace(&mut preamble, key, &value);
         }
 
-        for (key, pred) in &self.sub_preds {
-            Self::replace(&mut preamble, key, &pred.resolve());
-        }
-
-        Self::strip_unreplaced_needles(&mut preamble);
+        Self::strip_unreplaced_placeholders(&mut preamble);
 
         for section in &self.sections {
             let part = section.render();
@@ -148,7 +121,7 @@ impl TemplatedPreambler {
         *preamble = preamble.replace(&needle, value);
     }
 
-    fn strip_unreplaced_needles(preamble: &mut String) {
+    fn strip_unreplaced_placeholders(preamble: &mut String) {
         loop {
             let Some(start) = preamble.find("{{") else {
                 break;
@@ -187,18 +160,6 @@ mod tests {
         provider.generate(&[], &[]).expect("generate")
     }
 
-    struct CountingPred {
-        calls: AtomicUsize,
-        value: String,
-    }
-
-    impl PreambleKeyPred for CountingPred {
-        fn resolve(&self) -> String {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            self.value.clone()
-        }
-    }
-
     #[test]
     fn render_strips_unreplaced_placeholders() {
         let text = rendered(
@@ -215,18 +176,29 @@ mod tests {
         let text = rendered(
             &TemplatedPreamblerBuilder::new()
                 .template("{{a}} x {{b}}")
-                .with_string("a", "1")
+                .subst("a", "1")
                 .build(),
         );
         assert_eq!(text, "1 x ");
     }
 
     #[test]
-    fn render_substitutes_static_character() {
+    fn render_substitutes_arbitrary_key() {
+        let text = rendered(
+            &TemplatedPreamblerBuilder::new()
+                .template("hello {{name}}")
+                .subst("name", "world")
+                .build(),
+        );
+        assert_eq!(text, "hello world");
+    }
+
+    #[test]
+    fn render_substitutes_character() {
         let text = rendered(
             &TemplatedPreamblerBuilder::new()
                 .template(TEST_TEMPLATE)
-                .with_string("character", "Mika.")
+                .subst("character", "Mika.")
                 .build(),
         );
         assert!(text.contains("Mika."));
@@ -234,50 +206,60 @@ mod tests {
     }
 
     #[test]
-    fn render_pred_invoked_each_generate() {
-        let pred = Arc::new(CountingPred {
-            calls: AtomicUsize::new(0),
-            value: "dynamic".into(),
-        });
+    fn subst_dyn_invoked_each_generate() {
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let calls_in_fn = calls.clone();
         let provider = TemplatedPreamblerBuilder::new()
-            .template(TEST_TEMPLATE)
-            .with_pred("character", pred.clone())
+            .template("{{tag}}")
+            .subst_dyn("tag", move || {
+                calls_in_fn.fetch_add(1, Ordering::SeqCst);
+                "live".into()
+            })
             .build();
         rendered(&provider);
         rendered(&provider);
-        assert_eq!(pred.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
-    fn with_fn_invoked_each_generate() {
-        let pred = Arc::new(CountingPred {
-            calls: AtomicUsize::new(0),
-            value: "fn-value".into(),
-        });
-        let pred_in_fn = pred.clone();
+    fn character_dyn_invoked_each_generate() {
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let calls_in_fn = calls.clone();
         let provider = TemplatedPreamblerBuilder::new()
             .template(TEST_TEMPLATE)
-            .with_fn("character", move || {
-                pred_in_fn.resolve();
+            .subst_dyn("character", move || {
+                calls_in_fn.fetch_add(1, Ordering::SeqCst);
                 "from-fn".into()
             })
             .build();
         rendered(&provider);
         rendered(&provider);
-        assert_eq!(pred.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
-    fn with_fn_mut_can_change_value() {
-        let state = Arc::new(Mutex::new(1_u32));
+    fn character_dyn_mut_can_change_value() {
+        let state = std::sync::Arc::new(Mutex::new(1_u32));
         let state_in_fn = state.clone();
         let provider = TemplatedPreamblerBuilder::new()
             .template("n={{character}}")
-            .with_fn("character", move || state_in_fn.lock().unwrap().to_string())
+            .subst_dyn("character", move || state_in_fn.lock().unwrap().to_string())
             .build();
         assert!(rendered(&provider).contains("n=1"));
         *state.lock().unwrap() = 2;
         assert!(rendered(&provider).contains("n=2"));
+    }
+
+    #[test]
+    fn subst_dyn_overrides_subst_for_same_key() {
+        let text = rendered(
+            &TemplatedPreamblerBuilder::new()
+                .template("{{key}}")
+                .subst("key", "static")
+                .subst_dyn("key", || "dynamic".into())
+                .build(),
+        );
+        assert_eq!(text, "dynamic");
     }
 
     #[test]
@@ -294,7 +276,7 @@ mod tests {
         let text = rendered(
             &TemplatedPreamblerBuilder::new()
                 .template("## Character\n\n{{character}}\n")
-                .with_string("character", "Mika.")
+                .subst("character", "Mika.")
                 .section(StaticSection("## Extra\n\nMore text."))
                 .build(),
         );
@@ -305,17 +287,11 @@ mod tests {
     }
 
     #[test]
-    fn render_pred_empty_replaces_placeholder() {
-        struct EmptyPred;
-        impl PreambleKeyPred for EmptyPred {
-            fn resolve(&self) -> String {
-                String::new()
-            }
-        }
+    fn character_dyn_empty_replaces_placeholder() {
         let text = rendered(
             &TemplatedPreamblerBuilder::new()
                 .template(TEST_TEMPLATE)
-                .with_pred("character", Arc::new(EmptyPred))
+                .subst_dyn("character", || String::new())
                 .build(),
         );
         assert!(text.contains("## Character"));
@@ -323,10 +299,10 @@ mod tests {
     }
 
     #[test]
-    fn generate_substitutes_static_character() {
+    fn generate_substitutes_character() {
         let provider = TemplatedPreamblerBuilder::new()
             .template(TEST_TEMPLATE)
-            .with_string("character", "test")
+            .subst("character", "test")
             .build();
         let content = provider.generate(&[], &[]).expect("generate");
         assert!(content.contains("## Character"));
@@ -334,29 +310,30 @@ mod tests {
     }
 
     #[test]
-    fn generate_invokes_dynamic_preds_once_per_call() {
-        let pred = Arc::new(CountingPred {
-            calls: AtomicUsize::new(0),
-            value: "Frozen.".into(),
-        });
+    fn generate_invokes_character_dyn_once_per_call() {
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let calls_in_fn = calls.clone();
         let provider = TemplatedPreamblerBuilder::new()
             .template(TEST_TEMPLATE)
-            .with_pred("character", pred.clone())
+            .subst_dyn("character", move || {
+                calls_in_fn.fetch_add(1, Ordering::SeqCst);
+                "Frozen.".into()
+            })
             .build();
         provider.generate(&[], &[]).expect("generate 1");
         provider.generate(&[], &[]).expect("generate 2");
-        assert_eq!(pred.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
-    fn generate_reads_pred_state_at_call_time() {
+    fn generate_reads_character_dyn_at_call_time() {
         use std::sync::RwLock;
 
-        let current = Arc::new(RwLock::new("v1".to_string()));
+        let current = std::sync::Arc::new(RwLock::new("v1".to_string()));
         let current_in_fn = current.clone();
         let provider = TemplatedPreamblerBuilder::new()
             .template(TEST_TEMPLATE)
-            .with_fn("character", move || current_in_fn.read().expect("lock").clone())
+            .subst_dyn("character", move || current_in_fn.read().expect("lock").clone())
             .build();
         let first = provider.generate(&[], &[]).expect("generate 1");
         *current.write().expect("lock") = "v2".into();
