@@ -182,9 +182,9 @@ export async function createHttpChatClient() {
     },
 
     async createAgent({ name, completion_id: completionId, allowed_tools: allowedTools, character, desc }) {
-      return request(`${baseUrl}/settings/agents`, {
+      return await request(`${baseUrl}/settings/agents`, {
         method: "POST",
-        body: JSON.stringify({
+        body: jsonRequestBody({
           name,
           completion_id: completionId,
           allowed_tools: allowedTools ?? [],
@@ -254,6 +254,15 @@ export async function createHttpChatClient() {
       await request(channelPath(channelId), { method: "DELETE" });
     }
   });
+}
+
+function jsonRequestBody(value) {
+  try {
+    return JSON.stringify(value);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`failed to serialize request body: ${message}`);
+  }
 }
 
 async function request(url, init = {}) {

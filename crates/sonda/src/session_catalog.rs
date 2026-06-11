@@ -189,7 +189,7 @@ impl SondaSessionCatalog {
     ) -> Result<()> {
         let session_id = require_nonempty_trimmed(session_id, "session_id")?;
         let leader_agent_id = require_nonempty_trimmed(leader_agent_id, "leader_agent_id")?;
-        validate_sub_agents(&sub_agents)?;
+        let sub_agents = normalize_sub_agents(&sub_agents)?;
 
         let mut inner = self.data.write();
         let default_agent_id = inner.default_agent_id.clone();
@@ -279,7 +279,7 @@ fn validate_data(inner: SessionsData) -> Result<SessionsData> {
             None => None,
             Some(s) => Some(require_nonempty_trimmed(&s, "entries.agent_id")?),
         };
-        let sub_agents = validate_sub_agents(&e.sub_agents)?;
+        let sub_agents = normalize_sub_agents(&e.sub_agents)?;
         entries.push(SessionCatalogEntry {
             session_id,
             name,
@@ -328,7 +328,9 @@ fn save_locked(catalog: &SondaSessionCatalog, inner: &SessionsData) -> Result<()
     Ok(())
 }
 
-fn validate_sub_agents(sub_agents: &[SessionSubAgentEntry]) -> Result<Vec<SessionSubAgentEntry>> {
+pub(crate) fn normalize_sub_agents(
+    sub_agents: &[SessionSubAgentEntry],
+) -> Result<Vec<SessionSubAgentEntry>> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for entry in sub_agents {

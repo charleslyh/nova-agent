@@ -53,7 +53,7 @@ export function useSkillHub(client) {
     const hubKey = normalizeSkillKey(slug);
     if (!hubKey) return false;
     return (installedSkills || []).some((s) => {
-      const keys = [s.slug, s.id].map(normalizeSkillKey).filter(Boolean);
+      const keys = [s?.slug, s?.id].map(normalizeSkillKey).filter(Boolean);
       return keys.includes(hubKey);
     });
   }

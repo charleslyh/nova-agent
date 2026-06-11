@@ -11,7 +11,9 @@ use crate::{
     SondaSnapshot, SondaToolCatalog, SondaToolRegistration, SondaToolboxFactory,
     UnregisterSkillError,
 };
-use crate::session_catalog::{SessionAgentsConfig, SessionSubAgentEntry};
+use crate::session_catalog::{
+    normalize_sub_agents, SessionAgentsConfig, SessionSubAgentEntry,
+};
 use crate::agent_runner::RUN_SUB_AGENT_TOOL_NAME;
 use moray_skillhub::{SkillHub, SkillHubError};
 use serde::Serialize;
@@ -314,6 +316,7 @@ impl Sonda {
     ) -> Result<()> {
         let session_id = require_nonempty_trimmed(session_id, "session_id")?;
         let leader_agent_id = require_nonempty_trimmed(leader_agent_id, "leader_agent_id")?;
+        let sub_agents = normalize_sub_agents(&sub_agents)?;
         ensure_known_agent(&self.settings_store, &leader_agent_id)?;
 
         for entry in &sub_agents {

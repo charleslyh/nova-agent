@@ -26,6 +26,7 @@ export function resolveUserImageSrc(rawPath, sessionDir) {
   try {
     return convertFileSrc(fsPath);
   } catch {
+    // convertFileSrc may reject invalid or inaccessible paths; caller omits the preview.
     return null;
   }
 }
@@ -35,6 +36,7 @@ export function previewSrcForPickerPath(path) {
   try {
     return convertFileSrc(pathForConvertFileSrc(path));
   } catch {
+    // Picker paths can be transient or outside the asset scope; skip preview instead of failing.
     return null;
   }
 }

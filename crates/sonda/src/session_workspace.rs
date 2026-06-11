@@ -77,41 +77,16 @@ impl SondaSessionWorkspace {
         }
 
         let session_dir = self.session_dir(session_id);
-        if !session_dir.is_dir() {
-            return Err(InvalidContent::new(format!("unknown session: {session_id}")).into());
-        }
-
         let uploads_dir = session_dir.join("uploads");
-        tokio::fs::create_dir_all(&uploads_dir)
-            .await
-            .map_err(|source| FileIoError::new("create uploads dir", uploads_dir.clone(), source))?;
+        let session_id = session_id.to_string();
 
-        let mut staged = Vec::with_capacity(source_paths.len());
-        for source in source_paths {
-            let src = PathBuf::from(&source);
-            if !src.is_file() {
-                return Err(InvalidContent::new(format!("not a file: {source}")).into());
-            }
-            if !is_allowed_image(&src) {
-                return Err(
-                    InvalidContent::new(format!("unsupported image type: {source}")).into(),
-                );
-            }
-            let ext = src
-                .extension()
-                .and_then(|e| e.to_str())
-                .filter(|e| !e.is_empty())
-                .unwrap_or("bin");
-            let dest = uploads_dir.join(format!("{}.{}", Uuid::new_v4(), ext));
-            tokio::fs::copy(&src, &dest).await.map_err(|source| {
-                FileIoError::new("copy image into session uploads", dest.clone(), source)
-            })?;
-            staged.push(TurnResource::Image {
-                path: dest.to_string_lossy().into_owned(),
-            });
-        }
-
-        Ok(staged)
+        tokio::task::spawn_blocking(move || {
+            stage_session_images_blocking(session_id, session_dir, uploads_dir, source_paths)
+        })
+        .await
+        .map_err(|err| {
+            InvalidContent::new(format!("stage_session_images task failed: {err}"))
+        })?
     }
 
     /// Recursively list files under the session workspace (depth and node caps apply).
@@ -126,6 +101,45 @@ impl SondaSessionWorkspace {
             entries,
         })
     }
+}
+
+fn stage_session_images_blocking(
+    session_id: String,
+    session_dir: PathBuf,
+    uploads_dir: PathBuf,
+    source_paths: Vec<String>,
+) -> Result<Vec<TurnResource>> {
+    if !session_dir.is_dir() {
+        return Err(InvalidContent::new(format!("unknown session: {session_id}")).into());
+    }
+
+    fs::create_dir_all(&uploads_dir)
+        .map_err(|source| FileIoError::new("create uploads dir", uploads_dir.clone(), source))?;
+
+    let mut staged = Vec::with_capacity(source_paths.len());
+    for source in source_paths {
+        let src = PathBuf::from(&source);
+        if !src.is_file() {
+            return Err(InvalidContent::new(format!("not a file: {source}")).into());
+        }
+        if !is_allowed_image(&src) {
+            return Err(InvalidContent::new(format!("unsupported image type: {source}")).into());
+        }
+        let ext = src
+            .extension()
+            .and_then(|e| e.to_str())
+            .filter(|e| !e.is_empty())
+            .unwrap_or("bin");
+        let dest = uploads_dir.join(format!("{}.{}", Uuid::new_v4(), ext));
+        fs::copy(&src, &dest).map_err(|source| {
+            FileIoError::new("copy image into session uploads", dest.clone(), source)
+        })?;
+        staged.push(TurnResource::Image {
+            path: dest.to_string_lossy().into_owned(),
+        });
+    }
+
+    Ok(staged)
 }
 
 fn is_allowed_image(path: &Path) -> bool {
