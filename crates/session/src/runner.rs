@@ -10,7 +10,7 @@ use crate::{Result, SessionEventSink};
 pub trait AgentRunner: Send + Sync {
     async fn run_turn(
         &self,
-        session_id: &str,
+        session_id: String,
         context: Arc<dyn ContextEngine + Send + Sync>,
         cancellation: CancellationToken,
         sink: Arc<dyn SessionEventSink + Send + Sync>,

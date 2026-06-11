@@ -425,18 +425,18 @@ impl SondaAgentRunner {
 impl AgentRunner for SondaAgentRunner {
     async fn run_turn(
         &self,
-        session_id: &str,
+        session_id: String,
         context: Arc<dyn ContextEngine + Send + Sync>,
         cancellation: CancellationToken,
         sink: Arc<dyn SessionEventSink + Send + Sync>,
     ) -> std::result::Result<(), SessionError> {
         let leader_agent_id = self
-            .resolve_session_agent_id(session_id)
+            .resolve_session_agent_id(session_id.as_str())
             .map_err(|e: SondaError| SessionError::from(MorayError::from(e)))?;
 
         let toolbox = self
             .create_leader_toolbox(
-                session_id,
+                session_id.as_str(),
                 leader_agent_id.as_str(),
                 context.clone(),
                 sink.clone(),
@@ -462,7 +462,7 @@ impl AgentRunner for SondaAgentRunner {
             stream,
             &cancellation,
             sink.as_ref(),
-            session_id,
+            session_id.as_str(),
             leader_agent_id.as_str(),
             AgentRole::Leader,
             LeaderStreamHandler,

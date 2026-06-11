@@ -140,14 +140,8 @@ impl SondaSessionCatalog {
         let session_id = require_nonempty_trimmed(session_id, "session_id")?;
         let mut inner = self.data.write();
         let previous_entries = inner.entries.clone();
-        let before = inner.entries.len();
+        find_session_entry_index(&inner.entries, session_id.as_str())?;
         inner.entries.retain(|e| e.session_id != session_id);
-        if inner.entries.len() == before {
-            return Err(
-                MissingReference::new(format!("no [[entries]] row for session_id `{session_id}`"))
-                    .into(),
-            );
-        }
         if let Err(err) = save_locked(self, &inner) {
             inner.entries = previous_entries;
             return Err(err);
@@ -156,8 +150,12 @@ impl SondaSessionCatalog {
     }
 
     pub fn get_session_agent_id(&self, session_id: &str) -> Result<String> {
-        ensure_session_row(self, session_id)?;
-        Ok(self.logical_agent_id(session_id))
+        let inner = self.data.read();
+        let entry = find_session_entry(&inner.entries, session_id)?;
+        Ok(entry
+            .agent_id
+            .clone()
+            .unwrap_or_else(|| inner.default_agent_id.clone()))
     }
 
     /// Updates `[[entries]]` for `session_id` and persists `sessions.toml`.
@@ -165,14 +163,7 @@ impl SondaSessionCatalog {
     /// Caller must ensure `agent_id` references a valid agent in `server.toml` when applicable.
     pub fn get_session_sub_agents(&self, session_id: &str) -> Result<Vec<SessionSubAgentEntry>> {
         let inner = self.data.read();
-        let entry = inner.entries.iter().find(|e| e.session_id == session_id);
-        match entry {
-            Some(e) => Ok(e.sub_agents.clone()),
-            None => Err(
-                MissingReference::new(format!("no [[entries]] row for session_id `{session_id}`"))
-                    .into(),
-            ),
-        }
+        Ok(find_session_entry(&inner.entries, session_id)?.sub_agents.clone())
     }
 
     pub fn get_session_agents(&self, session_id: &str) -> Result<SessionAgentsConfig> {
@@ -194,13 +185,7 @@ impl SondaSessionCatalog {
 
         let mut inner = self.data.write();
         let default_agent_id = inner.default_agent_id.clone();
-        let index = inner
-            .entries
-            .iter()
-            .position(|e| e.session_id == session_id)
-            .ok_or_else(|| {
-                MissingReference::new(format!("no [[entries]] row for session_id `{session_id}`"))
-            })?;
+        let index = find_session_entry_index(&inner.entries, session_id.as_str())?;
         let previous_agent_id = inner.entries[index].agent_id.clone();
         let previous_sub_agents = inner.entries[index].sub_agents.clone();
 
@@ -228,13 +213,7 @@ impl SondaSessionCatalog {
         let agent_id = require_nonempty_trimmed(agent_id, "agent_id")?;
         let mut inner = self.data.write();
         let default_agent_id = inner.default_agent_id.clone();
-        let index = inner
-            .entries
-            .iter()
-            .position(|e| e.session_id == session_id)
-            .ok_or_else(|| {
-                MissingReference::new(format!("no [[entries]] row for session_id `{session_id}`"))
-            })?;
+        let index = find_session_entry_index(&inner.entries, session_id.as_str())?;
         let previous_agent_id = inner.entries[index].agent_id.clone();
 
         if agent_id == default_agent_id {
@@ -249,15 +228,6 @@ impl SondaSessionCatalog {
         Ok(())
     }
 
-    fn logical_agent_id(&self, session_id: &str) -> String {
-        let inner = self.data.read();
-        if let Some(e) = inner.entries.iter().find(|e| e.session_id == session_id) {
-            if let Some(ref aid) = e.agent_id {
-                return aid.clone();
-            }
-        }
-        inner.default_agent_id.clone()
-    }
 }
 
 fn validate_data(inner: SessionsData) -> Result<SessionsData> {
@@ -349,12 +319,23 @@ pub(crate) fn normalize_sub_agents(
     Ok(out)
 }
 
-fn ensure_session_row(catalog: &SondaSessionCatalog, session_id: &str) -> Result<()> {
-    if !catalog.has_session(session_id) {
-        return Err(
-            MissingReference::new(format!("no [[entries]] row for session_id `{session_id}`"))
-                .into(),
-        );
-    }
-    Ok(())
+fn missing_session_row(session_id: &str) -> SessionCatalogError {
+    MissingReference::new(format!("no [[entries]] row for session_id `{session_id}`")).into()
+}
+
+fn find_session_entry<'a>(
+    entries: &'a [SessionCatalogEntry],
+    session_id: &str,
+) -> Result<&'a SessionCatalogEntry> {
+    entries
+        .iter()
+        .find(|e| e.session_id == session_id)
+        .ok_or_else(|| missing_session_row(session_id))
+}
+
+fn find_session_entry_index(entries: &[SessionCatalogEntry], session_id: &str) -> Result<usize> {
+    entries
+        .iter()
+        .position(|e| e.session_id == session_id)
+        .ok_or_else(|| missing_session_row(session_id))
 }

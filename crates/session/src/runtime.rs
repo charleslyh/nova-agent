@@ -279,7 +279,7 @@ impl SessionRuntime {
 
         spawn(async move {
             let _ = runner
-                .run_turn(session_id.as_str(), context, cancellation, sink.clone())
+                .run_turn(session_id.clone(), context, cancellation, sink.clone())
                 .await;
 
             let finish = event_of(session_id.as_str(), SessionEventKind::TurnFinish);
