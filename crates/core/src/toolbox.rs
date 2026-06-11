@@ -559,6 +559,7 @@ impl Toolbox {
     }
 
     /// Merges `manifests` and `tools` into this toolbox in place.
+    /// It is used to support SubAgents mode, that `sub agent trigger` tool can be injected into leader agent's toolbox.
     pub fn extend(
         &mut self,
         manifests: impl IntoIterator<Item = ToolManifest>,

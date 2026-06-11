@@ -1,12 +1,13 @@
-//! Extensions-backed wiring for [`SondaBuilder`] (completions, secrets).
+//! Extensions-backed wiring for [`SondaBuilder`] (completions, secrets, auth).
 
 use std::sync::Arc;
 
-use moray_core::ChatCompletion;
+use moray_core::{ChatCompletion, ToolCallAuthorizer};
+use moray_extensions::auths::AlwaysAsking;
 use moray_extensions::completions::{Endpoint, OpenAIChatCompletion};
 use moray_sonda::{
     BadEnvironmentVariable, InvalidContent, SondaCompletionRegistration, SondaError,
-    SondaSettingsCompletionEntry,
+    SondaSettingsCompletionEntry, RUN_SUB_AGENT_TOOL_NAME,
 };
 use serde::Deserialize;
 
@@ -19,6 +20,10 @@ struct OpenAICompletionConfig {
 
 pub fn completion_registrations() -> Vec<SondaCompletionRegistration> {
     vec![SondaCompletionRegistration::new("openai", build_openai_completion)]
+}
+
+pub fn authorizer() -> Arc<dyn ToolCallAuthorizer> {
+    Arc::new(AlwaysAsking::with_auto_allow([RUN_SUB_AGENT_TOOL_NAME]))
 }
 
 fn build_openai_completion(entry: SondaSettingsCompletionEntry) -> Result<Arc<dyn ChatCompletion>, SondaError> {

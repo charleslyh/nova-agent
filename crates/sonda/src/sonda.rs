@@ -14,7 +14,6 @@ use crate::{
 use crate::session_catalog::{
     normalize_sub_agents, SessionAgentsConfig, SessionSubAgentEntry,
 };
-use crate::agent_runner::RUN_SUB_AGENT_TOOL_NAME;
 use moray_skillhub::{SkillHub, SkillHubError};
 use serde::Serialize;
 use serde_json::Value;
@@ -26,7 +25,6 @@ use crate::error::{
     SondaError,
 };
 use moray_channels::{ChannelCatalog, ChannelEntry, ChannelFactoryFn, ChannelsManager};
-use moray_extensions::auths::AlwaysAsking;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InstallSkillError {
@@ -359,6 +357,7 @@ impl Sonda {
 pub struct SondaBuilder {
     settings_store: Option<Arc<SondaSettingsStore>>,
     completion_registrations: Option<Vec<SondaCompletionRegistration>>,
+    authorizer: Option<Arc<dyn ToolCallAuthorizer>>,
     skill_center: Option<SkillCenter>,
     skill_hub: Option<SkillHub>,
     session_catalog: Option<Arc<SondaSessionCatalog>>,
@@ -381,6 +380,7 @@ impl SondaBuilder {
         Self {
             settings_store: None,
             completion_registrations: None,
+            authorizer: None,
             skill_center: None,
             skill_hub: None,
             session_catalog: None,
@@ -403,6 +403,11 @@ impl SondaBuilder {
         completion_registrations: Vec<SondaCompletionRegistration>,
     ) -> Self {
         self.completion_registrations = Some(completion_registrations);
+        self
+    }
+
+    pub fn authorizer(mut self, authorizer: Arc<dyn ToolCallAuthorizer>) -> Self {
+        self.authorizer = Some(authorizer);
         self
     }
 
@@ -501,7 +506,9 @@ impl SondaBuilder {
             .channel_factories
             .ok_or_else(|| error_missing_field("channel_factories"))?;
 
-        let authorizer = create_authorizer();
+        let authorizer = self
+            .authorizer
+            .ok_or_else(|| error_missing_field("authorizer"))?;
 
         let toolbox_factory = Arc::new(SondaToolboxFactory::new(
             settings_store.clone(),
@@ -617,11 +624,6 @@ fn validate_dependencies(
     }
 
     Ok(())
-}
-
-fn create_authorizer() -> Arc<dyn ToolCallAuthorizer> {
-    // TODO: select implementation from settings when auth profiles land in TOML.
-    Arc::new(AlwaysAsking::with_auto_allow([RUN_SUB_AGENT_TOOL_NAME]))
 }
 
 fn ensure_session_agents_known(

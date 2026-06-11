@@ -488,9 +488,10 @@ mod tests {
     use futures::Stream;
     use moray_core::{
         ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,
-        ChatCompletionResponseChunk, MorayError, ToolManifest,
+        ChatCompletionResponseChunk, MorayError, ToolCallAuthorizer, ToolCallResponder,
+        ToolManifest,
     };
-    use moray_extensions::auths::AlwaysAsking;
+    use serde_json::Value;
     use crate::SondaCompletionRegistration;
     use crate::transcripts::SondaSessionTranscripts;
     use tempfile::tempdir;
@@ -551,6 +552,21 @@ mod tests {
         })]
     }
 
+    struct AllowAllAuthorizer;
+
+    #[async_trait]
+    impl ToolCallAuthorizer for AllowAllAuthorizer {
+        async fn request(
+            &self,
+            _call_id: &str,
+            _tool_name: &str,
+            _args: &Value,
+            _responder: Arc<dyn ToolCallResponder>,
+        ) -> bool {
+            true
+        }
+    }
+
     fn build_test_sonda(server_path: &Path, sessions_path: &Path) -> crate::error::Result<()> {
         let data_dir = server_path
             .parent()
@@ -575,6 +591,7 @@ mod tests {
         let _ = SondaBuilder::new()
             .settings(settings_store)
             .completion_registrations(testing_completion_registrations())
+            .authorizer(Arc::new(AllowAllAuthorizer))
             .skill_center(skill_center)
             .skill_hub(skill_hub)
             .session_catalog(session_catalog)
@@ -1023,7 +1040,7 @@ allowed_tools = ["calc", "calc"]
 
     #[test]
     fn update_agent_rejects_unknown_allowed_tool() {
-        let authorizer = Arc::new(AlwaysAsking::new());
+        let authorizer = Arc::new(AllowAllAuthorizer);
         let dir = tempdir().unwrap();
         let server = dir.path().join("server.toml");
         let sessions = dir.path().join("sessions.toml");

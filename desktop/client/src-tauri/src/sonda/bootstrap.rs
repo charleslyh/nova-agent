@@ -192,6 +192,7 @@ pub fn build_sonda(
     SondaBuilder::new()
         .settings(settings_store)
         .completion_registrations(wiring::completion_registrations())
+        .authorizer(wiring::authorizer())
         .skill_center(skill_center)
         .skill_hub(skill_hub)
         .session_catalog(session_catalog)
