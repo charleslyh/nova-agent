@@ -19,11 +19,9 @@
       <div class="chat-main">
         <AppTitlebar
           :show-actions="!isWelcome()"
-          :show-channel-settings="!!activeChannelSessionIdForSettings"
           :show-session-detail="!!activeSessionId"
           :session-detail-open="drawerOpen"
           @reset="onResetSession"
-          @open-channel-settings="openChannelSettings"
           @toggle-session-detail="toggleDrawer"
         />
 
@@ -79,6 +77,12 @@
           :fetch-workspace="getSessionWorkspace"
           :get-session-agents="getSessionAgentsConfig"
           :save-session-agents="saveSessionAgentsConfig"
+          :channel-type="isChannelSession ? activeChannelPlatform : null"
+          :channel-id="activeChannelId"
+          :get-channel-config="getChannelConfig"
+          :save-channel-config="saveChannelConfig"
+          :create-channel="createChannel"
+          @channel-config-saved="onChannelConfigSaved"
         />
       </div>
     </div>
@@ -178,7 +182,7 @@ const {
   normalSessions,
   isChannelSession,
   activeChannelPlatform,
-  activeChannelSessionIdForSettings,
+  activeChannelId,
   channelEditing,
   channelDeleteTarget,
   channelDeleting,
@@ -214,7 +218,6 @@ const {
   confirmChannelDelete,
   cancelNormalSessionDelete,
   confirmNormalSessionDelete,
-  openChannelSettings,
   getChannelConfig,
   saveChannelConfig,
   createChannel,

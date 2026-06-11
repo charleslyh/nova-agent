@@ -236,8 +236,6 @@ pub struct WeComChannel {
     /// Last response_url from template_card_event, keyed by reply_target.
     /// Used to send final answer after approval workflow completes (appears below approval cards).
     last_response_url: Arc<RwLock<HashMap<String, String>>>,
-    /// `enter_chat` welcome text. `None` = default; `Some("")` = disabled.
-    welcome_message: Option<String>,
     session_outbound: Arc<RwLock<Option<Arc<WeComSessionOutbound>>>>,
 }
 
@@ -263,14 +261,8 @@ impl WeComChannel {
             card_event_entries: Arc::new(RwLock::new(HashMap::new())),
             active_drafts: Arc::new(RwLock::new(HashMap::new())),
             last_response_url: Arc::new(RwLock::new(HashMap::new())),
-            welcome_message: None,
             session_outbound: Arc::new(RwLock::new(None)),
         }
-    }
-
-    pub fn with_welcome_message(mut self, message: Option<String>) -> Self {
-        self.welcome_message = message;
-        self
     }
 
     async fn init_outbound(self: &Arc<Self>) {
@@ -314,14 +306,6 @@ impl WeComChannel {
             drafts.insert(req_id.to_string(), ActiveDraft::default());
         }
         Ok(Some(format!("{req_id}|{stream_id}")))
-    }
-
-    fn resolved_welcome_text(&self) -> Option<String> {
-        match &self.welcome_message {
-            None => Some(t!("wecom-welcome-default")),
-            Some(s) if s.trim().is_empty() => None,
-            Some(s) => Some(s.trim().to_string()),
-        }
     }
 
     pub fn with_heartbeat_interval(mut self, ms: u64) -> Self {
@@ -1125,10 +1109,9 @@ impl WeComChannel {
                     .and_then(|u| u.as_str())
                     .unwrap_or("");
                 tracing::info!(userid, "WeCom: user entered chat");
-                if let Some(welcome) = self.resolved_welcome_text() {
-                    if let Err(e) = self.reply_welcome(&req_id, &welcome).await {
-                        tracing::warn!(err = %e, %req_id, "WeCom: enter_chat welcome failed");
-                    }
+                let welcome = t!("wecom-welcome-default");
+                if let Err(e) = self.reply_welcome(&req_id, &welcome).await {
+                    tracing::warn!(err = %e, %req_id, "WeCom: enter_chat welcome failed");
                 }
             }
             "disconnected_event" => {

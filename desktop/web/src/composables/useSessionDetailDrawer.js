@@ -7,13 +7,8 @@ export function useSessionDetailDrawer() {
     drawerOpen.value = !drawerOpen.value;
   }
 
-  function closeDrawer() {
-    drawerOpen.value = false;
-  }
-
   return {
     drawerOpen,
-    toggleDrawer,
-    closeDrawer
+    toggleDrawer
   };
 }

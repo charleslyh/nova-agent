@@ -34,29 +34,70 @@
       <p v-else-if="agentsLoading" class="config-message">加载 Agents…</p>
       <template v-else>
         <div class="config-body">
-          <div class="config-section">
-            <label class="config-field">
-              <span class="config-field-label">Agent</span>
-              <select
-                v-model="leaderAgentId"
-                class="config-select"
-                :disabled="!agents.length || agentsSaving"
-                @change="onLeaderAgentChange"
-              >
-                <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}</option>
-              </select>
-            </label>
-          </div>
-
-          <div
-            class="config-section config-sub-agents-field"
-            role="group"
-            aria-labelledby="sub-agents-heading"
+          <section
+            v-if="channelType && channelId"
+            class="config-block"
+            aria-labelledby="config-block-channel-title"
           >
-            <div id="sub-agents-heading" class="config-section-head">
-              <span class="config-section-title">Sub Agents</span>
+            <header class="config-block-header">
+              <h3 id="config-block-channel-title" class="config-block-title">
+                <span class="config-block-title-label">频道</span>
+                <span v-if="channelTypeName" class="config-block-title-type">{{ channelTypeName }}</span>
+              </h3>
+            </header>
+            <div class="config-block-body">
+              <QQChannelConfigForm
+                v-if="channelType === 'qq'"
+                embedded
+                hide-agent
+                :channel-id="channelId"
+                :session-id="sessionId"
+                :is-new="false"
+                :get-channel-config="getChannelConfig"
+                :save-channel-config="saveChannelConfig"
+                :create-channel="createChannel"
+                @saved="$emit('channel-config-saved', $event)"
+              />
+              <WeComChannelConfigForm
+                v-else-if="channelType === 'wecom'"
+                embedded
+                hide-agent
+                :channel-id="channelId"
+                :session-id="sessionId"
+                :is-new="false"
+                :get-channel-config="getChannelConfig"
+                :save-channel-config="saveChannelConfig"
+                :create-channel="createChannel"
+                @saved="$emit('channel-config-saved', $event)"
+              />
             </div>
-            <ul v-if="selectableSubAgents.length" class="sub-agents-picker">
+          </section>
+
+          <section class="config-block" aria-labelledby="config-block-session-title">
+            <header class="config-block-header">
+              <h3 id="config-block-session-title" class="config-block-title">
+                <span class="config-block-title-label">会话</span>
+              </h3>
+            </header>
+            <div class="config-block-body">
+              <label class="config-field">
+                <span class="config-field-label">Leader Agent</span>
+                <AppSelect
+                  v-model="leaderAgentId"
+                  size="compact"
+                  :options="leaderAgentOptions"
+                  :disabled="!agents.length || agentsSaving"
+                  @update:model-value="onLeaderAgentChange"
+                />
+              </label>
+
+              <div
+                class="config-sub-agents-field"
+                role="group"
+                aria-labelledby="sub-agents-label"
+              >
+                <span id="sub-agents-label" class="config-field-label">Sub Agents</span>
+                <ul v-if="selectableSubAgents.length" class="sub-agents-picker">
               <li v-for="agent in selectableSubAgents" :key="agent.id" class="sub-agent-picker-item">
                 <label class="sub-agent-chip" :title="agent.id">
                   <input
@@ -116,9 +157,11 @@
                   </span>
                 </button>
               </li>
-            </ul>
-            <p v-else class="config-empty">暂无可用 Agent</p>
-          </div>
+                </ul>
+                <p v-else class="config-empty">暂无可用 Agent</p>
+              </div>
+            </div>
+          </section>
         </div>
       </template>
     </section>
@@ -191,6 +234,12 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { openPath } from "@tauri-apps/plugin-opener";
+import QQChannelConfigForm from "@/components/channels/QQChannelConfigForm.vue";
+import WeComChannelConfigForm from "@/components/channels/WeComChannelConfigForm.vue";
+import AppSelect from "@/components/form/AppSelect.vue";
+import { channelTypeLabel } from "@/channelInstances.js";
+
+defineEmits(["channel-config-saved"]);
 
 const props = defineProps({
   sessionId: {
@@ -220,8 +269,30 @@ const props = defineProps({
   saveSessionAgents: {
     type: Function,
     default: null
+  },
+  channelType: {
+    type: String,
+    default: null
+  },
+  channelId: {
+    type: String,
+    default: null
+  },
+  getChannelConfig: {
+    type: Function,
+    default: null
+  },
+  saveChannelConfig: {
+    type: Function,
+    default: null
+  },
+  createChannel: {
+    type: Function,
+    default: null
   }
 });
+
+const channelTypeName = computed(() => channelTypeLabel(props.channelType));
 
 const activeTab = ref("config");
 const loading = ref(false);
@@ -235,6 +306,10 @@ const agentsSaving = ref(false);
 const agentsError = ref(null);
 const leaderAgentId = ref("");
 const subAgents = ref([]);
+
+const leaderAgentOptions = computed(() =>
+  props.agents.map((agent) => ({ value: agent.id, label: agent.name }))
+);
 
 const selectableSubAgents = computed(() =>
   props.agents.filter((agent) => agent.id && agent.id !== leaderAgentId.value)
@@ -579,26 +654,52 @@ watch(
   overflow: auto;
 }
 
-.config-section {
-  padding: 14px;
+.config-block {
+  padding: 0;
 }
 
-.config-section + .config-section {
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
+.config-block + .config-block {
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
 }
 
-.config-section-head {
+.config-block-header {
+  padding: 9px 14px;
+  background: #f0f0f2;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.config-block-title {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 10px;
+  margin: 0;
+  line-height: 1.3;
 }
 
-.config-section-title {
-  font-size: 12px;
+.config-block-title-label {
+  font-size: 13px;
   font-weight: 600;
-  color: #444;
+  color: #1a1a1e;
+  letter-spacing: 0.01em;
+}
+
+.config-block-title-type {
+  font-size: 11px;
+  font-weight: 500;
+  color: #5c5c66;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  line-height: 1.35;
+}
+
+.config-block-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
 }
 
 .config-field {
@@ -613,25 +714,10 @@ watch(
   color: #444;
 }
 
-.config-select {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid #d5d5d9;
-  border-radius: 6px;
-  padding: 7px 10px;
-  font-size: 12px;
-  font-family: inherit;
-  color: #333;
-  background: #fff;
-}
-
-.config-section-hint {
-  font-size: 11px;
-  font-weight: 400;
-  color: #888;
-}
-
 .config-sub-agents-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -671,7 +757,6 @@ watch(
   align-items: center;
   width: 100%;
   min-width: 0;
-  min-height: 40px;
   background: #fff;
 }
 
@@ -685,7 +770,7 @@ watch(
   gap: 6px;
   flex: 1;
   min-width: 0;
-  min-height: 40px;
+  min-height: 32px;
   padding: 4px 0 4px 8px;
   cursor: pointer;
   user-select: none;
@@ -697,7 +782,7 @@ watch(
   align-items: center;
   justify-content: center;
   margin-left: auto;
-  margin-right: 6px;
+  margin-right: 3px;
   border: none;
   border-radius: 5px;
   padding: 8px 6px;

@@ -5,6 +5,11 @@ export const CHANNEL_TYPES = [
 
 const PLATFORM_NAMES = Object.fromEntries(CHANNEL_TYPES.map((t) => [t.id, t.label]));
 
+export function channelTypeLabel(type) {
+  if (!type) return "";
+  return PLATFORM_NAMES[type] ?? type;
+}
+
 /** Map `GET /channels` row for sidebar lookup. */
 export function mapChannelInstance(item) {
   if (!item?.type || !item?.session_id || !item?.channel_id) {

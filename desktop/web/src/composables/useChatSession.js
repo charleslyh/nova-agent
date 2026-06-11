@@ -459,18 +459,10 @@ export function useChatSession() {
     return new Set(channelInstances.value.map((c) => c.sessionId));
   }
 
-  /** Platform for sidebar icon: from GET /channels, or in-flight create dialog. */
+  /** Platform for sidebar icon: from GET /channels. */
   function resolveChannelType(sessionId) {
     if (!sessionId) return null;
-    const fromConfig = channelTypeBySessionIdFromInstances(channelInstances.value).get(
-      sessionId
-    );
-    if (fromConfig) return fromConfig;
-    const editing = channelEditing.value;
-    if (editing?.sessionId === sessionId && editing?.type) {
-      return editing.type;
-    }
-    return null;
+    return channelTypeBySessionIdFromInstances(channelInstances.value).get(sessionId) ?? null;
   }
 
   const channelSessions = computed(() => {
@@ -504,9 +496,12 @@ export function useChatSession() {
     return resolveChannelType(sid);
   });
 
-  const activeChannelSessionIdForSettings = computed(() => {
-    if (!isChannelSession.value) return null;
-    return activeSessionId.value;
+  const activeChannelId = computed(() => {
+    const sid = activeSessionId.value;
+    if (!sid || !isChannelSession.value) return null;
+    return (
+      channelInstances.value.find((c) => c.sessionId === sid)?.channelId ?? null
+    );
   });
 
   async function refreshChannelInstances() {
@@ -897,15 +892,6 @@ export function useChatSession() {
     }
   }
 
-  function startChannelEdit(inst) {
-    channelEditing.value = {
-      type: inst.type,
-      channelId: inst.channelId,
-      sessionId: inst.sessionId,
-      isNew: false
-    };
-  }
-
   function startChannelCreate(type) {
     channelEditing.value = { type, channelId: "", sessionId: "", isNew: true };
   }
@@ -916,7 +902,7 @@ export function useChatSession() {
 
   async function onChannelConfigSaved(result = {}) {
     const editing = channelEditing.value;
-    const sessionId = editing?.sessionId;
+    const sessionId = editing?.sessionId ?? activeSessionId.value;
     const wasNew = editing?.isNew;
     const channelChanged = result?.channelChanged !== false;
     closeChannelEdit();
@@ -961,29 +947,12 @@ export function useChatSession() {
       if (activeSessionId.value === sessionId) {
         openWelcome();
       }
-      if (channelEditing.value?.channelId === channelId) {
-        closeChannelEdit();
-      }
       channelDeleteTarget.value = null;
       await refreshChannelInstances();
     } catch (e) {
       channelDeleteError.value = e?.message || "删除失败";
     } finally {
       channelDeleting.value = false;
-    }
-  }
-
-  function openChannelSettings() {
-    const sessionId = activeChannelSessionIdForSettings.value;
-    if (!sessionId) return;
-    const inst = channelInstances.value.find((c) => c.sessionId === sessionId);
-    if (inst) {
-      startChannelEdit(inst);
-      return;
-    }
-    const platform = activeChannelPlatform.value;
-    if (platform === "qq" || platform === "wecom") {
-      channelEditing.value = { type: platform, sessionId, isNew: false };
     }
   }
 
@@ -1015,7 +984,7 @@ export function useChatSession() {
     normalSessions,
     isChannelSession,
     activeChannelPlatform,
-    activeChannelSessionIdForSettings,
+    activeChannelId,
     channelEditing,
     channelDeleteTarget,
     channelDeleting,
@@ -1032,7 +1001,6 @@ export function useChatSession() {
     requestChannelDelete,
     cancelChannelDelete,
     confirmChannelDelete,
-    openChannelSettings,
     activateSession,
     createAndActivateSession,
     deleteSession,

@@ -2,14 +2,6 @@
   <header class="app-titlebar" data-tauri-drag-region>
     <div class="app-titlebar-spacer" aria-hidden="true" />
     <button
-      v-if="showChannelSettings"
-      type="button"
-      class="titlebar-btn"
-      @click="$emit('open-channel-settings')"
-    >
-      频道设置
-    </button>
-    <button
       v-if="showActions"
       type="button"
       class="titlebar-btn"
@@ -50,10 +42,6 @@ defineProps({
     type: Boolean,
     default: true
   },
-  showChannelSettings: {
-    type: Boolean,
-    default: false
-  },
   showSessionDetail: {
     type: Boolean,
     default: false
@@ -64,7 +52,7 @@ defineProps({
   }
 });
 
-defineEmits(["reset", "open-channel-settings", "toggle-session-detail"]);
+defineEmits(["reset", "toggle-session-detail"]);
 </script>
 
 <style scoped>

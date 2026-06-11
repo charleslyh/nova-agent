@@ -1,7 +1,7 @@
 <template>
   <div class="channel-config-modals">
     <QQConfigDialog
-      v-if="editing?.type === 'qq'"
+      v-if="editing?.isNew && editing?.type === 'qq'"
       :channel-id="editing.channelId"
       :session-id="editing.sessionId ?? ''"
       :is-new="editing.isNew"
@@ -15,7 +15,7 @@
       @saved="$emit('saved', $event)"
     />
     <WeComConfigDialog
-      v-if="editing?.type === 'wecom'"
+      v-if="editing?.isNew && editing?.type === 'wecom'"
       :channel-id="editing.channelId"
       :session-id="editing.sessionId ?? ''"
       :is-new="editing.isNew"

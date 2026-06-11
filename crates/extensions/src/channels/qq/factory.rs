@@ -30,8 +30,6 @@ struct QqChannelData {
     pub app_id: String,
     pub app_secret: String,
     #[serde(default)]
-    pub allowed_users: Vec<String>,
-    #[serde(default)]
     pub environment: QQEnvironment,
 }
 
@@ -44,7 +42,6 @@ pub fn channel_from_config(data: &Value) -> Result<Arc<dyn ImChannel>, QqConfigE
     Ok(Arc::new(QQChannel::new_with_environment(
         parsed.app_id,
         parsed.app_secret,
-        parsed.allowed_users,
         parsed.environment,
     )))
 }

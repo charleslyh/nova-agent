@@ -25,8 +25,6 @@ struct WeComChannelData {
     pub heartbeat_interval_ms: u64,
     #[serde(default = "default_wecom_max_reconnect")]
     pub max_reconnect_attempts: u32,
-    #[serde(default)]
-    pub welcome_message: Option<String>,
 }
 
 fn default_wecom_heartbeat_interval() -> u64 {
@@ -53,8 +51,7 @@ pub fn channel_from_config(
             workspace_dir,
         )
         .with_heartbeat_interval(parsed.heartbeat_interval_ms)
-        .with_max_reconnect_attempts(parsed.max_reconnect_attempts)
-        .with_welcome_message(parsed.welcome_message),
+        .with_max_reconnect_attempts(parsed.max_reconnect_attempts),
     ))
 }
 

@@ -464,7 +464,6 @@ pub struct QQChannel {
     app_id: String,
     app_secret: String,
     environment: QQEnvironment,
-    allowed_users: Vec<String>,
     /// Cached access token + expiry timestamp.
     token_cache: Arc<RwLock<Option<(String, u64)>>>,
     /// Message deduplication set.
@@ -475,30 +474,19 @@ pub struct QQChannel {
 }
 
 impl QQChannel {
-    pub fn new(
-        app_id: String,
-        app_secret: String,
-        allowed_users: Vec<String>,
-    ) -> Self {
-        Self::new_with_environment(
-            app_id,
-            app_secret,
-            allowed_users,
-            QQEnvironment::Production,
-        )
+    pub fn new(app_id: String, app_secret: String) -> Self {
+        Self::new_with_environment(app_id, app_secret, QQEnvironment::Production)
     }
 
     pub fn new_with_environment(
         app_id: String,
         app_secret: String,
-        allowed_users: Vec<String>,
         environment: QQEnvironment,
     ) -> Self {
         Self {
             app_id,
             app_secret,
             environment,
-            allowed_users,
             token_cache: Arc::new(RwLock::new(None)),
             dedup: Arc::new(RwLock::new(HashSet::new())),
             session_state: Arc::new(RwLock::new(SessionState::default())),
@@ -623,10 +611,6 @@ impl QQChannel {
         }
     }
 
-    fn is_user_allowed(&self, user_id: &str) -> bool {
-        self.allowed_users.iter().any(|u| u == "*" || u == user_id)
-    }
-
     async fn parse_dispatch_message_event(
         &self,
         event_type: &str,
@@ -658,13 +642,6 @@ impl QQChannel {
                     .and_then(|a| a.get("user_openid"))
                     .and_then(Value::as_str)
                     .unwrap_or(author_id);
-
-                if !self.is_user_allowed(user_openid) {
-                    tracing::warn!(
-                        "QQ: ignoring C2C message from unauthorized user: {user_openid}"
-                    );
-                    return None;
-                }
 
                 tracing::info!(
                     user_openid,
@@ -709,13 +686,6 @@ impl QQChannel {
                     .and_then(|a| a.get("member_openid"))
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                if !self.is_user_allowed(author_id) {
-                    tracing::warn!(
-                        "QQ: ignoring group message from unauthorized user: {author_id}"
-                    );
-                    return None;
-                }
-
                 let group_openid = payload
                     .get("group_openid")
                     .and_then(Value::as_str)
@@ -1490,32 +1460,13 @@ mod tests {
 
     #[test]
     fn test_app_id_accessor() {
-        let ch = QQChannel::new("app".into(), "secret".into(), vec![]);
+        let ch = QQChannel::new("app".into(), "secret".into());
         assert_eq!(ch.app_id(), "app");
-    }
-
-    #[test]
-    fn test_user_allowed_wildcard() {
-        let ch = QQChannel::new("app".into(), "secret".into(), vec!["*".into()]);
-        assert!(ch.is_user_allowed("anyone"));
-    }
-
-    #[test]
-    fn test_user_allowed_specific() {
-        let ch = QQChannel::new("app".into(), "secret".into(), vec!["user123".into()]);
-        assert!(ch.is_user_allowed("user123"));
-        assert!(!ch.is_user_allowed("other"));
-    }
-
-    #[test]
-    fn test_user_denied_empty() {
-        let ch = QQChannel::new("app".into(), "secret".into(), vec![]);
-        assert!(!ch.is_user_allowed("anyone"));
     }
 
     #[tokio::test]
     async fn test_dedup() {
-        let ch = QQChannel::new("app".into(), "secret".into(), vec![]);
+        let ch = QQChannel::new("app".into(), "secret".into());
         assert!(!ch.is_duplicate("msg1").await);
         assert!(ch.is_duplicate("msg1").await);
         assert!(!ch.is_duplicate("msg2").await);
@@ -1523,7 +1474,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dedup_empty_id() {
-        let ch = QQChannel::new("app".into(), "secret".into(), vec![]);
+        let ch = QQChannel::new("app".into(), "secret".into());
         // Empty IDs should never be considered duplicates
         assert!(!ch.is_duplicate("").await);
         assert!(!ch.is_duplicate("").await);
@@ -1534,19 +1485,9 @@ mod tests {
         let data = serde_json::json!({
             "app_id": "12345",
             "app_secret": "secret_abc",
-            "allowed_users": ["user1"]
         });
-        let app_id = data["app_id"].as_str().unwrap();
-        let app_secret = data["app_secret"].as_str().unwrap();
-        let users: Vec<&str> = data["allowed_users"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap())
-            .collect();
-        assert_eq!(app_id, "12345");
-        assert_eq!(app_secret, "secret_abc");
-        assert_eq!(users, vec!["user1"]);
+        assert_eq!(data["app_id"].as_str().unwrap(), "12345");
+        assert_eq!(data["app_secret"].as_str().unwrap(), "secret_abc");
     }
 
     #[test]
