@@ -183,13 +183,18 @@ mod tests {
         )
     }
 
-    fn agent(seq: u64, agent: AgentResponseEvent) -> SondaSessionEventRecord {
+    fn agent(
+        seq: u64,
+        agent_id: &str,
+        role: AgentRole,
+        event: AgentResponseEvent,
+    ) -> SondaSessionEventRecord {
         record(
             seq,
             SessionEventKind::AgentResponse(SessionAgentResponse {
-                agent_id: "leader".into(),
-                role: AgentRole::Leader,
-                event: agent,
+                agent_id: agent_id.into(),
+                role,
+                event,
             }),
         )
     }
@@ -309,10 +314,10 @@ mod tests {
     fn closed_turn_replay_ignores_trailing_finished_event() {
         let records = vec![
             user(1, "hi"),
-            agent(2, tb("partial")),
-            agent(3, td()),
-            agent(4, done_stop()),
-            agent(5, finished(AgentFinishKind::Succeeded)),
+            agent(2, "leader", AgentRole::Leader, tb("partial")),
+            agent(3, "leader", AgentRole::Leader, td()),
+            agent(4, "leader", AgentRole::Leader, done_stop()),
+            agent(5, "leader", AgentRole::Leader, finished(AgentFinishKind::Succeeded)),
         ];
         let s = replay_records(&records);
         assert_eq!(s.messages.len(), 2);
@@ -324,9 +329,9 @@ mod tests {
     fn replay_session_closes_assistant_at_done() {
         let records = vec![
             user(1, "hi"),
-            agent(2, tb("hel")),
-            agent(3, td()),
-            agent(4, done_stop()),
+            agent(2, "leader", AgentRole::Leader, tb("hel")),
+            agent(3, "leader", AgentRole::Leader, td()),
+            agent(4, "leader", AgentRole::Leader, done_stop()),
         ];
         let s = replay_records(&records);
         assert_eq!(s.messages.len(), 2);
@@ -336,7 +341,7 @@ mod tests {
 
     #[test]
     fn new_user_aborts_partial_assistant() {
-        let records = vec![user(1, "hi"), agent(2, tb("hel")), user(3, "next")];
+        let records = vec![user(1, "hi"), agent(2, "leader", AgentRole::Leader, tb("hel")), user(3, "next")];
         let s = replay_records(&records);
         assert_eq!(s.messages.len(), 2);
         assert_user_message(&s.messages, 0, "hi");
@@ -347,10 +352,10 @@ mod tests {
     fn tool_call_canceled_skips_tool_message() {
         let records = vec![
             user(1, "hi"),
-            agent(2, td()),
-            agent(3, tc("c1", "echo", "{}")),
-            agent(4, done_stop()),
-            agent(5, tff("c1", ToolCallStatus::Canceled)),
+            agent(2, "leader", AgentRole::Leader, td()),
+            agent(3, "leader", AgentRole::Leader, tc("c1", "echo", "{}")),
+            agent(4, "leader", AgentRole::Leader, done_stop()),
+            agent(5, "leader", AgentRole::Leader, tff("c1", ToolCallStatus::Canceled)),
         ];
         let s = replay_records(&records);
         assert_eq!(s.messages.len(), 2);
@@ -366,11 +371,11 @@ mod tests {
     fn tool_call_finished_appends_tool_message() {
         let records = vec![
             user(1, "hi"),
-            agent(2, td()),
-            agent(3, tc("c1", "echo", "{}")),
-            agent(4, done_stop()),
-            agent(5, tcf("c1", "ok")),
-            agent(6, tff("c1", ToolCallStatus::Success)),
+            agent(2, "leader", AgentRole::Leader, td()),
+            agent(3, "leader", AgentRole::Leader, tc("c1", "echo", "{}")),
+            agent(4, "leader", AgentRole::Leader, done_stop()),
+            agent(5, "leader", AgentRole::Leader, tcf("c1", "ok")),
+            agent(6, "leader", AgentRole::Leader, tff("c1", ToolCallStatus::Success)),
         ];
         let s = replay_records(&records);
         assert_eq!(s.messages.len(), 3);

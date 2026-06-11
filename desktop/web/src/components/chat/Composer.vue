@@ -81,7 +81,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, onUnmounted, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { MAX_COMPOSER_IMAGE_ATTACHMENTS } from "@/composables/useChatSession.js";
 import { isTauriRuntime } from "@/lib/userImages.js";
@@ -138,6 +138,11 @@ const primaryLabel = computed(() => (isRunning.value ? "停止" : "发送"));
 const imeComposing = ref(false);
 const pickError = ref("");
 const pickingImages = ref(false);
+let pickImagesAlive = true;
+
+onUnmounted(() => {
+  pickImagesAlive = false;
+});
 
 const IMAGE_FILTER = {
   name: "Images",
@@ -181,7 +186,9 @@ async function onPickImages() {
     pickError.value = error?.message || "打开图片选择器失败";
     console.error("image picker failed", error);
   } finally {
-    pickingImages.value = false;
+    if (pickImagesAlive) {
+      pickingImages.value = false;
+    }
   }
 }
 

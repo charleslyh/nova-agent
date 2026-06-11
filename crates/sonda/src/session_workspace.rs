@@ -1,7 +1,7 @@
 //! Per-session on-disk workspace paths, directory listing, and upload staging.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use moray_session::TurnResource;
 use serde::Serialize;
@@ -118,10 +118,7 @@ fn stage_session_images_blocking(
 
     let mut staged = Vec::with_capacity(source_paths.len());
     for source in source_paths {
-        let src = PathBuf::from(&source);
-        if !src.is_file() {
-            return Err(InvalidContent::new(format!("not a file: {source}")).into());
-        }
+        let src = resolve_stage_source_path(&source)?;
         if !is_allowed_image(&src) {
             return Err(InvalidContent::new(format!("unsupported image type: {source}")).into());
         }
@@ -140,6 +137,26 @@ fn stage_session_images_blocking(
     }
 
     Ok(staged)
+}
+
+fn resolve_stage_source_path(source: &str) -> Result<PathBuf> {
+    let source = source.trim();
+    if source.is_empty() {
+        return Err(InvalidContent::new("empty source path").into());
+    }
+    let raw = Path::new(source);
+    for component in raw.components() {
+        if matches!(component, Component::ParentDir) {
+            return Err(InvalidContent::new(format!("invalid source path: {source}")).into());
+        }
+    }
+    let canonical = fs::canonicalize(raw).map_err(|_| {
+        InvalidContent::new(format!("source path not accessible: {source}"))
+    })?;
+    if !canonical.is_file() {
+        return Err(InvalidContent::new(format!("not a file: {source}")).into());
+    }
+    Ok(canonical)
 }
 
 fn is_allowed_image(path: &Path) -> bool {
