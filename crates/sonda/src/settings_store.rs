@@ -188,14 +188,13 @@ impl SondaSettingsStore {
     pub fn delete_agent(&self, agent_id: &str) -> crate::error::Result<()> {
         let agent_id = require_argument_nonempty(agent_id, "agent_id")?;
         let mut inner = self.inner.write();
+        if !inner.agents.iter().any(|a| a.id == agent_id) {
+            return Err(InvalidArguments::new("agent_id", "corresponding agent not found").into());
+        }
         if inner.agents.len() <= 1 {
             return Err(InvalidContent::new("cannot delete the last agent").into());
         }
-        let before = inner.agents.len();
         inner.agents.retain(|a| a.id != agent_id);
-        if inner.agents.len() == before {
-            return Err(InvalidArguments::new("agent_id", "corresponding agent not found").into());
-        }
         save_locked(self, &inner)?;
         Ok(())
     }

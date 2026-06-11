@@ -506,10 +506,10 @@ function closeEdit() {
   editingAgent.value = null;
 }
 
-let createAgentRequestId = 0;
+let createAgentAlive = true;
 
 onUnmounted(() => {
-  createAgentRequestId += 1;
+  createAgentAlive = false;
 });
 
 async function startCreateAgent() {
@@ -525,18 +525,17 @@ async function startCreateAgent() {
   }
   createAgentError.value = "";
   creatingAgent.value = true;
-  const requestId = ++createAgentRequestId;
   try {
     await props.createAgent({
-      completionId,
-      ...DEFAULT_NEW_AGENT
+      ...DEFAULT_NEW_AGENT,
+      completionId
     });
   } catch (e) {
-    if (requestId !== createAgentRequestId) return;
+    if (!createAgentAlive) return;
     createAgentError.value = e?.message || "创建 Agent 失败";
     console.error(e);
   } finally {
-    if (requestId === createAgentRequestId) {
+    if (createAgentAlive) {
       creatingAgent.value = false;
     }
   }

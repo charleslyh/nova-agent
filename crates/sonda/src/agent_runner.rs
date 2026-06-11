@@ -49,11 +49,11 @@ impl SubStreamHandler {
         }
     }
 
-    fn into_result(self) -> String {
+    fn into_result(self) -> std::result::Result<String, String> {
         if let Some(err) = self.exit_error {
-            return err;
+            return Err(err);
         }
-        self.final_text.unwrap_or_default()
+        Ok(self.final_text.unwrap_or_default())
     }
 
     fn capture_pending_if_nonempty(&mut self) {
@@ -251,7 +251,10 @@ impl TypedTool for SondaSubAgentTrigger {
             SubStreamHandler::new(),
         )
         .await?;
-        responder.send_text(handler.into_result()).await?;
+        match handler.into_result() {
+            Ok(text) => responder.send_text(text).await?,
+            Err(err) => responder.send_text(err).await?,
+        }
 
         Ok(())
     }
@@ -420,9 +423,9 @@ impl AgentRunner for SondaAgentRunner {
     async fn run_turn(
         &self,
         session_id: &str,
-        context: Arc<dyn ContextEngine>,
+        context: Arc<dyn ContextEngine + Send + Sync>,
         cancellation: CancellationToken,
-        sink: Arc<dyn SessionEventSink>,
+        sink: Arc<dyn SessionEventSink + Send + Sync>,
     ) -> std::result::Result<(), SessionError> {
         let leader_agent_id = self
             .resolve_session_agent_id(session_id)
@@ -504,6 +507,6 @@ mod tests {
         handler.on_event(&completion_done());
         handler.on_event(&text_block("final summary"));
         handler.on_event(&completion_done());
-        assert_eq!(handler.into_result(), "final summary");
+        assert_eq!(handler.into_result(), Ok("final summary".into()));
     }
 }

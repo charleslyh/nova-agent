@@ -11,8 +11,8 @@ pub trait AgentRunner: Send + Sync {
     async fn run_turn(
         &self,
         session_id: &str,
-        context: Arc<dyn ContextEngine>,
+        context: Arc<dyn ContextEngine + Send + Sync>,
         cancellation: CancellationToken,
-        sink: Arc<dyn SessionEventSink>,
+        sink: Arc<dyn SessionEventSink + Send + Sync>,
     ) -> Result<()>;
 }

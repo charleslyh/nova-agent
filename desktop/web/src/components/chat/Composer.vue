@@ -154,7 +154,15 @@ function onCompositionEnd() {
 
 async function onPickImages() {
   pickError.value = "";
-  if (isRunning.value || attachAtLimit.value || pickingImages.value) return;
+  if (pickingImages.value) return;
+  if (isRunning.value) {
+    pickError.value = "会话运行中，暂无法添加图片";
+    return;
+  }
+  if (attachAtLimit.value) {
+    pickError.value = attachButtonTitle.value;
+    return;
+  }
   pickingImages.value = true;
   try {
     const selected = await open({
