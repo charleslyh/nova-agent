@@ -304,10 +304,11 @@ fn build_sub_context(
         .flatten()
         .unwrap_or_default();
 
+    let skill_center = skill_center.clone();
     let preambler = TemplatedPreamblerBuilder::default()
         .template(settings_store.preamble_template())
         .with_string("character", character)
-        .section(SkillsSection::new(skill_center.skills(SkillFilterKind::All)))
+        .section(SkillsSection::new(move || skill_center.skills(SkillFilterKind::All)))
         .build();
 
     // 将模型推理出的 task 描述作为 "User Message" 指引 sub agent 完成特定任务

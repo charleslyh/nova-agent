@@ -55,8 +55,7 @@ impl SondaSessionFactory {
         let session_catalog = self.session_catalog.clone();
         let preamble_template = settings.preamble_template();
 
-        // TODO: filter skills per session / turn instead of loading the full catalog.
-        let skills = self.skill_center.skills(SkillFilterKind::All);
+        let skill_center = self.skill_center.clone();
 
         let preambler = TemplatedPreamblerBuilder::default()
             .template(preamble_template)
@@ -74,7 +73,11 @@ impl SondaSessionFactory {
                     .flatten()
                     .unwrap_or_default()
             })
-            .section(SkillsSection::new(skills))
+            .section(SkillsSection::new(move || {
+                // Re-read the skill catalog on every run: skills may be installed or removed
+                // mid-session; the value is frozen for that run when the context engine runs setup.
+                skill_center.skills(SkillFilterKind::All)
+            }))
             .build();
 
         Ok(Arc::new(
