@@ -6,10 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     SkillCenter, SondaAgentRunner, SondaCompletionFactory, SondaCompletionRegistration,
-    SondaSessionCatalog,
-    SondaSessionFactory, SondaSessionTranscripts, SondaSessionWorkspace, SondaSettingsStore,
-    SondaSnapshot, SondaToolCatalog, SondaToolRegistration, SondaToolboxFactory,
-    UnregisterSkillError,
+    ContextBuilder, SondaSessionCatalog, SondaSessionFactory,
+    SondaSessionTranscripts, SondaSessionWorkspace, SondaSettingsStore, SondaSnapshot,
+    SondaToolCatalog, SondaToolRegistration, SondaToolboxFactory, UnregisterSkillError,
 };
 use crate::session_catalog::{
     normalize_sub_agents, SessionAgentsConfig, SessionSubAgentEntry,
@@ -358,6 +357,7 @@ pub struct SondaBuilder {
     settings_store: Option<Arc<SondaSettingsStore>>,
     completion_registrations: Option<Vec<SondaCompletionRegistration>>,
     authorizer: Option<Arc<dyn ToolCallAuthorizer>>,
+    context_builder: Option<ContextBuilder>,
     skill_center: Option<SkillCenter>,
     skill_hub: Option<SkillHub>,
     session_catalog: Option<Arc<SondaSessionCatalog>>,
@@ -381,6 +381,7 @@ impl SondaBuilder {
             settings_store: None,
             completion_registrations: None,
             authorizer: None,
+            context_builder: None,
             skill_center: None,
             skill_hub: None,
             session_catalog: None,
@@ -408,6 +409,11 @@ impl SondaBuilder {
 
     pub fn authorizer(mut self, authorizer: Arc<dyn ToolCallAuthorizer>) -> Self {
         self.authorizer = Some(authorizer);
+        self
+    }
+
+    pub fn context_builder(mut self, context_builder: ContextBuilder) -> Self {
+        self.context_builder = Some(context_builder);
         self
     }
 
@@ -510,6 +516,10 @@ impl SondaBuilder {
             .authorizer
             .ok_or_else(|| error_missing_field("authorizer"))?;
 
+        let context_builder = self
+            .context_builder
+            .ok_or_else(|| error_missing_field("context_builder"))?;
+
         let toolbox_factory = Arc::new(SondaToolboxFactory::new(
             settings_store.clone(),
             authorizer.clone(),
@@ -522,8 +532,8 @@ impl SondaBuilder {
             settings_store.clone(),
             completion_factory,
             toolbox_factory.clone(),
-            skill_center.clone(),
             session_catalog.clone(),
+            context_builder.clone(),
             true,
         ));
 
@@ -537,11 +547,10 @@ impl SondaBuilder {
         session_transcripts.set_hook(snapshot.clone());
 
         let session_factory = Arc::new(SondaSessionFactory::new(
-            settings_store.clone(),
-            skill_center.clone(),
             session_catalog.clone(),
             session_transcripts.clone(),
             agent_runner.clone(),
+            context_builder,
         ));
 
         let live_sessions = LiveSessions::new(session_factory);

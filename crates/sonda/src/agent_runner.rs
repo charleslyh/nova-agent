@@ -9,8 +9,6 @@ use moray_core::{
     ContextEngine, MorayError, Tool, ToolCallResponder,
     ToolManifest, Toolbox, TypedTool,
 };
-use moray_extensions::context::CompositeContextEngineBuilder;
-use moray_extensions::preambles::{SkillsSection, TemplatedPreamblerBuilder};
 use moray_session::{
     AgentRole, AgentRunner, SessionAgentResponse, SessionError, SessionEvent, SessionEventKind,
     SessionEventSink, TurnInput,
@@ -20,8 +18,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::completion_factory::SondaCompletionFactory;
 use crate::error::{Result, SondaError};
+use crate::context::ContextBuilder;
 use crate::session_catalog::{SessionSubAgentEntry, SubAgentContextMode};
-use crate::skill_center::{SkillCenter, SkillFilterKind};
 use crate::toolbox_factory::SondaToolboxFactory;
 use crate::{SondaSessionCatalog, SondaSettingsStore};
 
@@ -182,7 +180,7 @@ pub(crate) struct SondaSubAgentTrigger {
     sub_agents: Vec<SessionSubAgentEntry>,
     settings_store: Arc<SondaSettingsStore>,
     completion_factory: Arc<SondaCompletionFactory>,
-    skill_center: SkillCenter,
+    context_builder: ContextBuilder,
     leader_context: Arc<dyn ContextEngine>,
     sink: Arc<dyn SessionEventSink>,
     cancellation: CancellationToken,
@@ -215,14 +213,33 @@ impl TypedTool for SondaSubAgentTrigger {
 
         let mode = resolve_context_mode(args.context.as_deref(), entry.context_mode)?;
 
-        let sub_context = build_sub_context(
-            agent_id,
-            self.settings_store.clone(),
-            &self.skill_center,
-            self.leader_context.clone(),
-            mode,
-            args.task,
-        )?;
+        // 和 leader agent 不一样，leader agent 的上下文生命周期和 session 是一致的，因此其 context engine 在创建 session 时
+        // 就一次性创建好，并可以在所有后续 turn 中复用。而 sub agent 的上下文生命周期和 turn 是一致的，因此其
+        // context engine 在每次 tool 调用时都需要重新创建。尤其注意需要理解 “和 turn 是一致的” 的具体含义。
+        // 例如:
+        // 1. turn 发起时携带上下文 C0
+        // 2. turn 执行, 模型推理出 text block t1, 以及 tool call 1, 执行后返回结果 r1
+        // 3. turn 继续，模型推理出要执行 sub agent A (by run_sub_agent tool), with 'task'
+        // 那么，此时 sub agent A 的上下文应该是 C0 + t1 + r1 + task
+        let task_message = TurnInput::from(args.task).to_user_message();
+        let messages = match mode {
+            // 独立上下文模式：sub agent 仅看到 task 描述，通常用于完成一些简单、独立、从 task 描述就能完整拿到所需信息的工作
+            SubAgentContextMode::Isolated => vec![task_message],
+
+            // 分支上下文模式：sub agent 看到 leader 上下文和 task 描述，通常用于完成一些需要依赖 leader 上下文的复杂任务
+            SubAgentContextMode::Branch => {
+                let mut msgs = self.leader_context.snapshot().ok_or_else(|| {
+                    MorayError::Message(
+                        "branch context requires leader context snapshot support".into(),
+                    )
+                })?;
+                msgs.push(task_message);
+                msgs
+            }
+        };
+
+        let sub_context = (self.context_builder)(agent_id, messages)
+            .map_err(MorayError::from)?;
 
         let completion = self
             .completion_factory
@@ -254,6 +271,7 @@ impl TypedTool for SondaSubAgentTrigger {
             SubStreamHandler::new(),
         )
         .await?;
+
         match handler.into_result() {
             Ok(text) => responder.send_text(text).await?,
             Err(err) => responder.send_text(err).await?,
@@ -278,70 +296,13 @@ fn resolve_context_mode(
     Ok(session_default)
 }
 
-fn build_sub_context(
-    agent_id: &str,
-    settings_store: Arc<SondaSettingsStore>,
-    skill_center: &SkillCenter,
-    leader_context: Arc<dyn ContextEngine>,
-    mode: SubAgentContextMode,
-    task: String,
-) -> std::result::Result<Arc<dyn ContextEngine>, MorayError> {
-    // 和 leader agent 不一样，leader agent 的上下文生命周期和 session 是一致的，因此其 context engine 在创建 session 时
-    // 就一次性创建好，并可以在所有后续 turn 中复用。而 sub agent 的上下文生命周期和 turn 是一致的，因此其
-    // context engine 在每次 tool 调用时都需要重新创建。尤其注意需要理解 “和 turn 是一致的” 的具体含义。
-    // 例如:
-    // 1. turn 发起时携带上下文 C0
-    // 2. turn 执行, 模型推理出 text block t1, 以及 tool call 1, 执行后返回结果 r1
-    // 3. turn 继续，模型推理出要执行 sub agent A (by run_sub_agent tool), with 'task'
-    // 那么，此时 sub agent A 的上下文应该是 C0 + t1 + r1 + task
-    //
-    // subst_dyn("character", …) 是为了给 session 的 leader context 一次设置、多次动态决议用的。而这里的 build_sub_context 一定是
-    // 当前 turn 的即时消费。因此没必要再考虑二次动态决议的问题。相对“静态”更高效
-
-    let character = settings_store
-        .agent_character(agent_id)
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-
-    let skill_center = skill_center.clone();
-    let preambler = TemplatedPreamblerBuilder::default()
-        .template(settings_store.preamble_template())
-        .subst("character", character)
-        .section(SkillsSection::new(move || skill_center.skills(SkillFilterKind::All)))
-        .build();
-
-    // 将模型推理出的 task 描述作为 "User Message" 指引 sub agent 完成特定任务
-    let task_message = TurnInput::from(task).to_user_message();
-    let messages = match mode {
-        // 独立上下文模式：sub agent 仅看到 task 描述，通常用于完成一些简单、独立、从 task 描述就能完整拿到所需信息的工作
-        SubAgentContextMode::Isolated => vec![task_message],
-
-        // 分支上下文模式：sub agent 看到 leader 上下文和 task 描述，通常用于完成一些需要依赖 leader 上下文的复杂任务
-        SubAgentContextMode::Branch => {
-            let mut msgs = leader_context.snapshot().ok_or_else(|| {
-                MorayError::Message("branch context requires leader context snapshot support".into())
-            })?;
-            msgs.push(task_message);
-            msgs
-        }
-    };
-
-    Ok(Arc::new(
-        CompositeContextEngineBuilder::new()
-            .messages(messages)
-            .preamble(Arc::new(preambler))
-            .build(),
-    ))
-}
-
 /// Shared agent runner: completion/toolbox factories and agent stream assembly.
 pub struct SondaAgentRunner {
     settings_store: Arc<SondaSettingsStore>,
     completion_factory: Arc<SondaCompletionFactory>,
     toolbox_factory: Arc<SondaToolboxFactory>,
-    skill_center: SkillCenter,
     session_catalog: Arc<SondaSessionCatalog>,
+    context_builder: ContextBuilder,
     stream: bool,
 }
 
@@ -350,16 +311,16 @@ impl SondaAgentRunner {
         settings_store: Arc<SondaSettingsStore>,
         completion_factory: Arc<SondaCompletionFactory>,
         toolbox_factory: Arc<SondaToolboxFactory>,
-        skill_center: SkillCenter,
         session_catalog: Arc<SondaSessionCatalog>,
+        context_builder: ContextBuilder,
         stream: bool,
     ) -> Self {
         Self {
             settings_store,
             completion_factory,
             toolbox_factory,
-            skill_center,
             session_catalog,
+            context_builder,
             stream,
         }
     }
@@ -410,7 +371,7 @@ impl SondaAgentRunner {
                 sub_agents,
                 settings_store: self.settings_store.clone(),
                 completion_factory: self.completion_factory.clone(),
-                skill_center: self.skill_center.clone(),
+                context_builder: self.context_builder.clone(),
                 leader_context,
                 sink,
                 cancellation,

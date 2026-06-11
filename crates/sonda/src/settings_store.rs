@@ -492,7 +492,8 @@ mod tests {
         ToolManifest,
     };
     use serde_json::Value;
-    use crate::SondaCompletionRegistration;
+    use crate::{ContextBuilder, SondaCompletionRegistration};
+    use moray_extensions::context::CompositeContextEngineBuilder;
     use crate::transcripts::SondaSessionTranscripts;
     use tempfile::tempdir;
 
@@ -567,6 +568,16 @@ mod tests {
         }
     }
 
+    fn testing_context_builder() -> ContextBuilder {
+        Arc::new(|_agent_id, messages| {
+            Ok(Arc::new(
+                CompositeContextEngineBuilder::new()
+                    .messages(messages)
+                    .build(),
+            ))
+        })
+    }
+
     fn build_test_sonda(server_path: &Path, sessions_path: &Path) -> crate::error::Result<()> {
         let data_dir = server_path
             .parent()
@@ -592,6 +603,7 @@ mod tests {
             .settings(settings_store)
             .completion_registrations(testing_completion_registrations())
             .authorizer(Arc::new(AllowAllAuthorizer))
+            .context_builder(testing_context_builder())
             .skill_center(skill_center)
             .skill_hub(skill_hub)
             .session_catalog(session_catalog)

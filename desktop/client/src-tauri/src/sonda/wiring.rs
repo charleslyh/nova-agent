@@ -1,13 +1,16 @@
-//! Extensions-backed wiring for [`SondaBuilder`] (completions, secrets, auth).
+//! Extensions-backed wiring for [`SondaBuilder`] (completions, secrets, auth, context).
 
 use std::sync::Arc;
 
-use moray_core::{ChatCompletion, ToolCallAuthorizer};
+use moray_core::{ChatCompletion, ContextEngine, ToolCallAuthorizer};
 use moray_extensions::auths::AlwaysAsking;
 use moray_extensions::completions::{Endpoint, OpenAIChatCompletion};
+use moray_extensions::context::CompositeContextEngineBuilder;
+use moray_extensions::preambles::{SkillsSection, TemplatedPreamblerBuilder};
 use moray_sonda::{
-    BadEnvironmentVariable, InvalidContent, SondaCompletionRegistration, SondaError,
-    SondaSettingsCompletionEntry, RUN_SUB_AGENT_TOOL_NAME,
+    BadEnvironmentVariable, ContextBuilder, InvalidContent, SkillCenter,
+    SkillFilterKind, SondaCompletionRegistration, SondaError, SondaSettingsCompletionEntry,
+    SondaSettingsStore, RUN_SUB_AGENT_TOOL_NAME,
 };
 use serde::Deserialize;
 
@@ -24,6 +27,40 @@ pub fn completion_registrations() -> Vec<SondaCompletionRegistration> {
 
 pub fn authorizer() -> Arc<dyn ToolCallAuthorizer> {
     Arc::new(AlwaysAsking::with_auto_allow([RUN_SUB_AGENT_TOOL_NAME]))
+}
+
+pub fn context_builder(
+    settings_store: Arc<SondaSettingsStore>,
+    skill_center: SkillCenter,
+) -> ContextBuilder {
+    Arc::new(move |agent_id: &str, messages| {
+        let agent_id = agent_id.to_string();
+        let settings = settings_store.clone();
+        let skill_center = skill_center.clone();
+
+        let preambler = TemplatedPreamblerBuilder::default()
+            .template(settings_store.preamble_template())
+            .subst_dyn("character", move || {
+                settings
+                    .agent_character(&agent_id)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
+            })
+            .section(SkillsSection::new(move || {
+                // Re-read the skill catalog on every setup: skills may be installed or removed
+                // mid-session; the value is frozen for that run when the context engine runs setup.
+                skill_center.skills(SkillFilterKind::All)
+            }))
+            .build();
+
+        Ok(Arc::new(
+            CompositeContextEngineBuilder::new()
+                .messages(messages)
+                .preamble(Arc::new(preambler))
+                .build(),
+        ) as Arc<dyn ContextEngine>)
+    })
 }
 
 fn build_openai_completion(entry: SondaSettingsCompletionEntry) -> Result<Arc<dyn ChatCompletion>, SondaError> {

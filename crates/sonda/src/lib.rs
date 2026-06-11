@@ -3,6 +3,7 @@
 
 mod agent_runner;
 mod completion_factory;
+mod context;
 mod error;
 mod toolbox_factory;
 mod session_catalog;
@@ -21,6 +22,7 @@ pub use error::{
 };
 pub use agent_runner::{SondaAgentRunner, RUN_SUB_AGENT_TOOL_NAME};
 pub use completion_factory::{SondaCompletionFactory, SondaCompletionRegistration};
+pub use context::ContextBuilder;
 pub use toolbox_factory::{
     SondaToolCatalogEntry, SondaToolRegistration, SondaToolboxFactory,
 };

@@ -190,9 +190,13 @@ pub fn build_sonda(
     let tool_catalog = SondaToolCatalog::open(&paths.tools_catalog_path)?;
 
     SondaBuilder::new()
-        .settings(settings_store)
+        .settings(settings_store.clone())
         .completion_registrations(wiring::completion_registrations())
         .authorizer(wiring::authorizer())
+        .context_builder(wiring::context_builder(
+            settings_store,
+            skill_center.clone(),
+        ))
         .skill_center(skill_center)
         .skill_hub(skill_hub)
         .session_catalog(session_catalog)

@@ -2,40 +2,36 @@
 
 use std::sync::Arc;
 
-use moray_extensions::context::CompositeContextEngineBuilder;
-use moray_extensions::preambles::{SkillsSection, TemplatedPreamblerBuilder};
 use moray_core::ContextEngine;
-use moray_session::{AgentRunner, SessionFactory, SessionRuntime};
+use moray_session::{SessionFactory, SessionRuntime};
 
 use crate::{
-    replay_records, SkillCenter, SkillFilterKind, SondaAgentRunner, SondaSessionCatalog,
-    SondaSessionError, SondaSessionTranscripts, SondaSettingsStore,
+    context::ContextBuilder,
+    replay_records, SondaAgentRunner, SondaSessionCatalog, SondaSessionError,
+    SondaSessionTranscripts,
 };
 
 /// Session-scoped dependencies used when activating a live runtime.
 #[derive(Clone)]
 pub struct SondaSessionFactory {
-    settings_store: Arc<SondaSettingsStore>,
-    skill_center: SkillCenter,
     session_catalog: Arc<SondaSessionCatalog>,
     session_transcripts: Arc<SondaSessionTranscripts>,
     agent_runner: Arc<SondaAgentRunner>,
+    context_builder: ContextBuilder,
 }
 
 impl SondaSessionFactory {
     pub fn new(
-        settings_store: Arc<SondaSettingsStore>,
-        skill_center: SkillCenter,
         session_catalog: Arc<SondaSessionCatalog>,
         session_transcripts: Arc<SondaSessionTranscripts>,
         agent_runner: Arc<SondaAgentRunner>,
+        context_builder: ContextBuilder,
     ) -> Self {
         Self {
-            settings_store,
-            skill_center,
             session_catalog,
             session_transcripts,
             agent_runner,
+            context_builder,
         }
     }
 
@@ -49,43 +45,13 @@ impl SondaSessionFactory {
             .map_err(|e| SondaSessionError::Moray(e.into()))?;
 
         let messages = replay_records(&records).messages;
+        let agent_id = self
+            .session_catalog
+            .get_session_agent_id(session_id)
+            .map_err(|e| SondaSessionError::Moray(crate::SondaError::from(e).into()))?;
 
-        let session_id = session_id.to_string();
-        let settings = self.settings_store.clone();
-        let session_catalog = self.session_catalog.clone();
-        let preamble_template = settings.preamble_template();
-
-        let skill_center = self.skill_center.clone();
-
-        let preambler = TemplatedPreamblerBuilder::default()
-            .template(preamble_template)
-            .subst_dyn("character", move || {
-                // Re-read the session's agent on every run: the user may change it in Settings
-                // mid-session; the value is frozen for that run when the context engine runs setup.
-                let agent_id = match session_catalog.get_session_agent_id(session_id.as_str()) {
-                    Ok(id) => id,
-                    Err(_) => return String::new(),
-                };
-
-                settings
-                    .agent_character(&agent_id)
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default()
-            })
-            .section(SkillsSection::new(move || {
-                // Re-read the skill catalog on every run: skills may be installed or removed
-                // mid-session; the value is frozen for that run when the context engine runs setup.
-                skill_center.skills(SkillFilterKind::All)
-            }))
-            .build();
-
-        Ok(Arc::new(
-            CompositeContextEngineBuilder::new()
-                .messages(messages)
-                .preamble(Arc::new(preambler))
-                .build(),
-        ))
+        (self.context_builder)(agent_id.as_str(), messages)
+            .map_err(|e| SondaSessionError::Moray(e.into()))
     }
 }
 
@@ -98,14 +64,15 @@ impl SessionFactory for SondaSessionFactory {
             return Err(SondaSessionError::UnknownSession);
         }
 
+        // 在创建 session 时，就应该立即创建 leader agent 的 context engine，并可以在所有后续 turn 中复用。
+        // 从而可以在整个 session 生命周期中跟踪完整的上下文状态。
         let context_engine = self.create_context_engine(session_id)?;
-        let agent_runner: Arc<dyn AgentRunner> = self.agent_runner.clone();
 
         Ok(Arc::new(SessionRuntime::new(
             session_id,
             self.session_transcripts.clone(),
             context_engine,
-            agent_runner,
+            self.agent_runner.clone(),
         )))
     }
 }
