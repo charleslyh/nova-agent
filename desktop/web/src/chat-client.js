@@ -188,6 +188,12 @@ export async function createHttpChatClient() {
       character,
       desc
     } = {}) {
+      if (!name?.trim()) {
+        throw new Error("name is required");
+      }
+      if (!completionId?.trim()) {
+        throw new Error("completionId is required");
+      }
       try {
         return await request(`${baseUrl}/settings/agents`, {
           method: "POST",

@@ -680,38 +680,24 @@ fn log_llm_completed(
 ) {
     let completion_id = response_protocol.completion_id.as_deref().unwrap_or("");
     let tool_call_count = response_protocol.tool_calls.len();
+    let usage = response_protocol.usage.as_ref();
 
-    match response_protocol.usage.as_ref() {
-        Some(usage) => info!(
-            model = %model,
-            completion_id = completion_id,
-            connect_ms,
-            first_chunk_ms = ?first_chunk_ms,
-            total_ms,
-            text_chars,
-            tool_call_count,
-            chunk_count = response_protocol.chunk_count,
-            upstream_finish_reason = ?upstream_finish_reason,
-            finalized_reason = ?finalized_reason,
-            prompt_tokens = usage.prompt_tokens,
-            completion_tokens = usage.completion_tokens,
-            total_tokens = usage.total_tokens,
-            "llm completed"
-        ),
-        None => info!(
-            model = %model,
-            completion_id = completion_id,
-            connect_ms,
-            first_chunk_ms = ?first_chunk_ms,
-            total_ms,
-            text_chars,
-            tool_call_count,
-            chunk_count = response_protocol.chunk_count,
-            upstream_finish_reason = ?upstream_finish_reason,
-            finalized_reason = ?finalized_reason,
-            "llm completed"
-        ),
-    }
+    info!(
+        model = %model,
+        completion_id = completion_id,
+        connect_ms,
+        first_chunk_ms = ?first_chunk_ms,
+        total_ms,
+        text_chars,
+        tool_call_count,
+        chunk_count = response_protocol.chunk_count,
+        upstream_finish_reason = ?upstream_finish_reason,
+        finalized_reason = ?finalized_reason,
+        prompt_tokens = usage.map(|u| u.prompt_tokens),
+        completion_tokens = usage.map(|u| u.completion_tokens),
+        total_tokens = usage.map(|u| u.total_tokens),
+        "llm completed"
+    );
 
     debug!(
         model = %model,

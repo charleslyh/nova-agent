@@ -161,7 +161,8 @@ const props = defineProps({
 const emit = defineEmits(["close", "deleted"]);
 
 function hasAgentId(agent) {
-  const id = agent?.id;
+  if (agent == null) return false;
+  const id = agent.id;
   return id != null && id !== "";
 }
 

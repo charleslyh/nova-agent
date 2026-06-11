@@ -167,14 +167,10 @@ impl SondaSettingsStore {
         let name = require_argument_nonempty(name, "name")?;
         let completion_id = require_argument_nonempty(completion_id, "completion_id")?;
 
-        {
-            let inner = self.inner.read();
-            ensure_completion_exists(&inner, completion_id)?;
-        }
-
         let agent_id = new_agent_id();
         {
             let mut inner = self.inner.write();
+            ensure_completion_exists(&inner, completion_id)?;
             inner.agents.push(SondaSettingsAgentEntry {
                 id: agent_id.clone(),
                 name: name.to_string(),

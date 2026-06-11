@@ -280,7 +280,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { renderSkillMarkdown } from "@/lib/markdown.js";
 import AgentEditDialog from "@/components/settings/AgentEditDialog.vue";
 import { useSkillHub } from "@/composables/useSkillHub.js";
@@ -506,8 +506,18 @@ function closeEdit() {
   editingAgent.value = null;
 }
 
+let createAgentRequestId = 0;
+
+onUnmounted(() => {
+  createAgentRequestId += 1;
+});
+
 async function startCreateAgent() {
   if (creatingAgent.value) return;
+  if (typeof props.createAgent !== "function") {
+    createAgentError.value = "创建 Agent 功能不可用";
+    return;
+  }
   const completionId = props.settingsCatalog?.completions?.[0]?.id;
   if (!completionId) {
     createAgentError.value = "未配置可用模型，无法创建 Agent";
@@ -515,16 +525,20 @@ async function startCreateAgent() {
   }
   createAgentError.value = "";
   creatingAgent.value = true;
+  const requestId = ++createAgentRequestId;
   try {
     await props.createAgent({
       completionId,
       ...DEFAULT_NEW_AGENT
     });
   } catch (e) {
+    if (requestId !== createAgentRequestId) return;
     createAgentError.value = e?.message || "创建 Agent 失败";
     console.error(e);
   } finally {
-    creatingAgent.value = false;
+    if (requestId === createAgentRequestId) {
+      creatingAgent.value = false;
+    }
   }
 }
 </script>

@@ -41,7 +41,7 @@
           v-if="showAttachButton"
           type="button"
           class="attach-btn"
-          :disabled="isRunning || attachments.length >= MAX_COMPOSER_IMAGE_ATTACHMENTS"
+          :disabled="isRunning || pickingImages || attachments.length >= MAX_COMPOSER_IMAGE_ATTACHMENTS"
           :title="attachButtonTitle"
           :aria-label="attachButtonTitle"
           @click="onPickImages"
@@ -137,6 +137,7 @@ const primaryLabel = computed(() => (isRunning.value ? "停止" : "发送"));
 
 const imeComposing = ref(false);
 const pickError = ref("");
+const pickingImages = ref(false);
 
 const IMAGE_FILTER = {
   name: "Images",
@@ -153,7 +154,8 @@ function onCompositionEnd() {
 
 async function onPickImages() {
   pickError.value = "";
-  if (isRunning.value || attachAtLimit.value) return;
+  if (isRunning.value || attachAtLimit.value || pickingImages.value) return;
+  pickingImages.value = true;
   try {
     const selected = await open({
       multiple: true,
@@ -168,6 +170,8 @@ async function onPickImages() {
   } catch (error) {
     pickError.value = error?.message || "打开图片选择器失败";
     console.error("image picker failed", error);
+  } finally {
+    pickingImages.value = false;
   }
 }
 
