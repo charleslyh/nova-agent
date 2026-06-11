@@ -92,7 +92,7 @@ fn shorten_target(target: &str) -> String {
     match parts.len() {
         0 => String::new(),
         1 | 2 => target.to_string(),
-        n => parts[n - 2..].join(":"),
+        n => parts[n - 2..].join("::"),
     }
 }
 
@@ -110,7 +110,7 @@ fn pad_target(target: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{pad_target, shorten_target};
+    use super::{pad_target, shorten_target, TARGET_WIDTH};
 
     #[test]
     fn shorten_target_keeps_last_two_segments() {
@@ -130,9 +130,9 @@ mod tests {
     fn pad_target_right_aligns() {
         assert_eq!(
             pad_target("wecom::channel"),
-            format!("{:>24}", "wecom::channel"),
+            format!("{:>TARGET_WIDTH$}", "wecom::channel"),
         );
-        assert_eq!(pad_target("agent"), format!("{:>24}", "agent"));
+        assert_eq!(pad_target("agent"), format!("{:>TARGET_WIDTH$}", "agent"));
     }
 
     #[test]
@@ -141,12 +141,12 @@ mod tests {
             pad_target(&shorten_target(
                 "foo::bar::very_long_module_name_that_exceeds_width"
             )),
-            "...me_that_exceeds_width",
+            "...hat_exceeds_width",
         );
     }
 
     #[test]
     fn pad_target_clips_from_front_preserving_tail() {
-        assert_eq!(pad_target("extensions::wecom::channel"), "...sions::wecom::channel");
+        assert_eq!(pad_target("extensions::wecom::channel"), "...s::wecom::channel");
     }
 }

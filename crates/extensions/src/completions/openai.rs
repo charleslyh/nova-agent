@@ -187,10 +187,14 @@ fn truncate_protocol_payload(payload: &str, limit: usize) -> String {
     if payload.len() <= limit {
         return payload.to_string();
     }
+    let mut end = limit.min(payload.len());
+    while end > 0 && !payload.is_char_boundary(end) {
+        end -= 1;
+    }
     let total = payload.len();
     format!(
         "{}... [truncated, total {total} bytes]",
-        &payload[..limit]
+        &payload[..end]
     )
 }
 
@@ -737,7 +741,7 @@ fn merge_tool_chunk(buf: &mut HashMap<u32, (String, String, String)>, tc: &AoMes
 
 #[cfg(test)]
 mod tests {
-    use super::{ParsedTextChunk, ThinkTagStreamParser};
+    use super::{truncate_protocol_payload, ParsedTextChunk, ThinkTagStreamParser};
 
     fn text(s: &str) -> ParsedTextChunk {
         ParsedTextChunk::Text(s.into())
@@ -829,5 +833,17 @@ mod tests {
         let mut p = ThinkTagStreamParser::new();
         assert_eq!(p.push("<thinking>foo"), vec![text("<thinking>foo")]);
         assert!(p.finish().is_empty());
+    }
+
+    #[test]
+    fn truncate_protocol_payload_respects_utf8_char_boundary() {
+        let payload = format!("{{\"msg\":\"{}\"}}", "你好");
+        let limit = payload.len() - 1;
+        let truncated = truncate_protocol_payload(&payload, limit);
+        assert!(truncated.ends_with(" bytes]"));
+        assert!(std::str::from_utf8(
+            truncated.split("... [truncated").next().unwrap().as_bytes()
+        )
+        .is_ok());
     }
 }
