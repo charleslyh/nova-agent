@@ -13,14 +13,15 @@ use moray_channels::{
     ChannelDataRedactFn, ChannelEntry, ChannelError, ChannelFactoryFn,
 };
 use moray_core::TypedTool;
-use moray_extensions::completions::OpenAIChatCompletion;
 use moray_skillhub::SkillHub;
 use moray_sonda::{
     SessionCatalogError, SkillCenter, SkillDirKind, SkillDirSource, SkillFilterKind, Sonda,
-    SondaBuilder, SondaCompletionRegistration, SondaError, SondaSessionCatalog,
-    SondaSessionTranscripts, SondaSessionWorkspace, SondaSettingsStore, SondaSettingsStoreError,
-    SondaToolCatalog, SondaToolCatalogError, SondaToolRegistration,
+    SondaBuilder, SondaError, SondaSessionCatalog, SondaSessionTranscripts, SondaSessionWorkspace,
+    SondaSettingsStore, SondaSettingsStoreError, SondaToolCatalog, SondaToolCatalogError,
+    SondaToolRegistration,
 };
+
+use super::wiring;
 use tracing::{info, warn};
 
 use super::paths::{ensure_layout, SondaRuntimePaths};
@@ -108,12 +109,6 @@ fn create_skill_center(paths: &SondaRuntimePaths) -> Result<SkillCenter, SondaBo
     Ok(center)
 }
 
-fn completion_registration() -> SondaCompletionRegistration {
-    SondaCompletionRegistration::new(|endpoint| {
-        Ok(Arc::new(OpenAIChatCompletion::new(endpoint)))
-    })
-}
-
 fn tool_registrations(
     cli_path: impl AsRef<Path>,
     tools_catalog_path: impl AsRef<Path>,
@@ -196,7 +191,7 @@ pub fn build_sonda(
 
     SondaBuilder::new()
         .settings(settings_store)
-        .completion_registration(completion_registration())
+        .completion_registrations(wiring::completion_registrations())
         .skill_center(skill_center)
         .skill_hub(skill_hub)
         .session_catalog(session_catalog)

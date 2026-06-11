@@ -62,7 +62,6 @@ fn settings_store_http_status(err: &SondaSettingsStoreError) -> (StatusCode, Str
     match err {
         SondaSettingsStoreError::InvalidContent(e) => invalid_content_http_status(e),
         SondaSettingsStoreError::MissingReference(e) => missing_reference_http_status(e),
-        SondaSettingsStoreError::BadEnvironment(e) => internal_error_http_status(e),
         SondaSettingsStoreError::FileIo(e) => file_io_http_status(e),
     }
 }

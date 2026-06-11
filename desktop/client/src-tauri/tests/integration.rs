@@ -47,6 +47,7 @@ impl Drop for TestHomeGuard {
 fn minimal_server_toml() -> &'static str {
     r#"[[completions]]
 id = "a1b2c3d4"
+provider = "openai"
 name = "Test completion"
 base_url = "http://127.0.0.1:9/v1"
 model = "test-model"
@@ -62,6 +63,7 @@ completion_id = "a1b2c3d4"
 fn two_agent_server_toml() -> &'static str {
     r#"[[completions]]
 id = "a1b2c3d4"
+provider = "openai"
 name = "Test completion"
 base_url = "http://127.0.0.1:9/v1"
 model = "test-model"

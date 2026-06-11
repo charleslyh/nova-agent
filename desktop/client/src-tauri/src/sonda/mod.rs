@@ -2,6 +2,7 @@
 
 mod bootstrap;
 mod paths;
+mod wiring;
 
 pub use bootstrap::build_sonda;
 pub use paths::{

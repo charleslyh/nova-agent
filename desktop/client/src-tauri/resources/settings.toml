@@ -38,6 +38,7 @@ allowed_tools = [
 
 [[completions]]
 id = "b2c3d4e5"
+provider = "openai"
 name = "HunYuan-V3-Preview"
 base_url = "http://29.209.163.43:8081/v1"
 model = "HY3-Preview-INT8"

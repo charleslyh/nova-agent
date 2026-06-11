@@ -1,20 +1,22 @@
-//! Sonda **settings store**: agents / completions 的磁盘读写、结构校验，以及按需解析 completion 的 `api_key`。
+//! Sonda **settings store**: agents / completions 的磁盘读写、结构校验与合并。
+//!
+//! Completion 条目含 `id` / `provider` 与 opaque `config`；provider 具体语义由应用 wiring 解释。
 //!
 //! 调用方通过 [`SondaSettingsStore::load`] 传入 bundled 与 user 两个路径；store 内加载并合并
 //! （bundled 为基础，user 为 patch）。写回仅作用于 user 路径。与 [`super::session_catalog`] 配合，
 //! 由 [`super::sonda::SondaBuilder::build`] 做跨文件一致性检查。
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use parking_lot::RwLock;
-use moray_extensions::completions::Endpoint;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use thiserror::Error;
 
 use super::error::{
-    require_argument_nonempty, require_nonempty_field, BadEnvironmentVariable, FileIoError,
-    InvalidArguments, InvalidContent, MissingReference,
+    require_argument_nonempty, require_nonempty_field, FileIoError, InvalidArguments,
+    InvalidContent, MissingReference,
 };
 
 type Result<T> = std::result::Result<T, SondaSettingsStoreError>;
@@ -26,9 +28,6 @@ pub enum SondaSettingsStoreError {
 
     #[error(transparent)]
     MissingReference(#[from] MissingReference),
-
-    #[error(transparent)]
-    BadEnvironment(#[from] BadEnvironmentVariable),
 
     #[error(transparent)]
     FileIo(#[from] FileIoError),
@@ -52,17 +51,35 @@ pub struct SondaSettingsAgentEntry {
     pub desc: Option<String>,
 }
 
+/// One completion profile: stable `id`, routing `provider`, plus opaque provider configuration.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SondaSettingsCompletionEntry {
     pub id: String,
     #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub base_url: String,
-    #[serde(default)]
-    pub model: String,
-    #[serde(default)]
-    pub api_key: Option<String>,
+    pub provider: String,
+    #[serde(flatten)]
+    pub config: BTreeMap<String, toml::Value>,
+}
+
+impl SondaSettingsCompletionEntry {
+    /// Read a string field from opaque config without schema validation.
+    pub fn config_str(&self, key: &str) -> Option<&str> {
+        self.config.get(key).and_then(|v| v.as_str())
+    }
+
+    /// Merged completion row as JSON (`id` plus flattened config keys).
+    pub fn to_json_value(&self) -> Value {
+        let mut map = Map::new();
+        map.insert("id".to_string(), Value::String(self.id.clone()));
+        map.insert(
+            "provider".to_string(),
+            Value::String(self.provider.clone()),
+        );
+        for (key, value) in &self.config {
+            map.insert(key.clone(), toml_value_to_json(value));
+        }
+        Value::Object(map)
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -199,22 +216,27 @@ impl SondaSettingsStore {
         Ok(())
     }
 
-    pub fn resolve_completion_endpoint(
+    /// Completion profile for `completion_id` (secrets not materialized).
+    pub fn completion_entry(
+        &self,
+        completion_id: &str,
+    ) -> crate::error::Result<SondaSettingsCompletionEntry> {
+        let inner = self.inner.read();
+        Ok(find_completion_by_id(&inner, completion_id)?.clone())
+    }
+
+    /// Completion profile bound to `agent_id` (secrets not materialized).
+    pub fn completion_entry_for_agent(
         &self,
         agent_id: &str,
-    ) -> crate::error::Result<Endpoint> {
+    ) -> crate::error::Result<SondaSettingsCompletionEntry> {
         let inner = self.inner.read();
-
         let agent = inner
             .agents
             .iter()
             .find(|a| a.id == agent_id)
             .ok_or_else(|| InvalidArguments::new("agent_id", "corresponding agent not found"))?;
-
-        let c = find_completion_for_agent(&inner, agent)?;
-        let api_key = resolve_raw_api_key(&c.api_key)?;
-
-        Ok(Endpoint::new(api_key, c.base_url.clone(), c.model.clone()))
+        Ok(find_completion_for_agent(&inner, agent)?.clone())
     }
 
     pub fn has_agent(&self, agent_id: &str) -> bool {
@@ -255,29 +277,6 @@ impl SondaSettingsStore {
     }
 }
 
-fn validate_api_key_kind(raw: &Option<String>) -> Result<()> {
-    let Some(raw) = raw else {
-        return Ok(());
-    };
-
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(InvalidContent::new("literal api_key is empty").into());
-    }
-
-    if let Some(rest) = trimmed.strip_prefix("env:") {
-        let name = rest.trim();
-        if name.is_empty() {
-            return Err(InvalidContent::new(
-                "api_key env: reference has empty variable name",
-            )
-            .into());
-        }
-    }
-
-    Ok(())
-}
-
 fn validate_settings_file(settings: &SondaSettingsFile) -> Result<()> {
     if settings.completions.is_empty() || settings.agents.is_empty() {
         return Err(InvalidContent::new(
@@ -289,15 +288,10 @@ fn validate_settings_file(settings: &SondaSettingsFile) -> Result<()> {
     let mut seen_completions = HashSet::new();
     for c in &settings.completions {
         require_nonempty_field(&c.id, "completions.id")?;
+        require_nonempty_field(&c.provider, "completions.provider")?;
         if !seen_completions.insert(&c.id) {
             return Err(InvalidContent::new(format!("duplicate completion id `{}`", c.id)).into());
         }
-
-        require_nonempty_field(&c.base_url, "base_url")?;
-        require_nonempty_field(&c.model, "model")?;
-        require_nonempty_field(&c.name, "name")?;
-
-        validate_api_key_kind(&c.api_key)?;
     }
 
     let mut seen_agents = HashSet::new();
@@ -395,12 +389,12 @@ fn merge_completion_entry(
     base: SondaSettingsCompletionEntry,
     patch: SondaSettingsCompletionEntry,
 ) -> SondaSettingsCompletionEntry {
+    let mut config = base.config;
+    config.extend(patch.config);
     SondaSettingsCompletionEntry {
         id: patch.id,
-        name: pick_nonempty(patch.name, base.name),
-        base_url: pick_nonempty(patch.base_url, base.base_url),
-        model: pick_nonempty(patch.model, base.model),
-        api_key: patch.api_key.or(base.api_key),
+        provider: pick_nonempty(patch.provider, base.provider),
+        config,
     }
 }
 
@@ -427,55 +421,6 @@ fn save(settings: &SondaSettingsStore) -> Result<()> {
     save_locked(settings, &inner)
 }
 
-#[derive(Debug)]
-enum ApiKeyCell {
-    Literal(String),
-    EnvVar(String),
-    Omitted,
-}
-
-fn read_env_trimmed(name: &str) -> std::result::Result<String, BadEnvironmentVariable> {
-    let value = std::env::var(name).map_err(|_| BadEnvironmentVariable::not_set(name))?;
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(BadEnvironmentVariable::empty(name));
-    }
-    Ok(value.to_string())
-}
-
-fn classify_api_key_cell(raw: &Option<String>) -> Result<ApiKeyCell> {
-    let Some(raw) = raw else {
-        return Ok(ApiKeyCell::Omitted);
-    };
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(InvalidContent::new("literal api_key is empty after trim").into());
-    }
-    if let Some(rest) = trimmed.strip_prefix("env:") {
-        let name = rest.trim();
-        if name.is_empty() {
-            return Err(InvalidContent::new(
-                "api_key env: reference has empty variable name",
-            )
-            .into());
-        }
-        return Ok(ApiKeyCell::EnvVar(name.to_string()));
-    }
-    Ok(ApiKeyCell::Literal(trimmed.to_string()))
-}
-
-fn materialize_api_key(cell: &ApiKeyCell) -> Result<String> {
-    match cell {
-        ApiKeyCell::Literal(s) => Ok(s.clone()),
-        ApiKeyCell::Omitted => Ok("".to_string()),
-        ApiKeyCell::EnvVar(name) => Ok(read_env_trimmed(name)?),
-    }
-}
-
-fn resolve_raw_api_key(raw: &Option<String>) -> Result<String> {
-    materialize_api_key(&classify_api_key_cell(raw)?)
-}
-
 fn ensure_completion_exists(inner: &SondaSettingsFile, completion_id: &str) -> Result<()> {
     if !inner.completions.iter().any(|c| c.id == completion_id) {
         return Err(
@@ -485,21 +430,51 @@ fn ensure_completion_exists(inner: &SondaSettingsFile, completion_id: &str) -> R
     Ok(())
 }
 
-fn find_completion_for_agent<'a>(
+fn find_completion_by_id<'a>(
     inner: &'a SondaSettingsFile,
-    agent: &'a SondaSettingsAgentEntry,
+    completion_id: &str,
 ) -> Result<&'a SondaSettingsCompletionEntry> {
     inner
         .completions
         .iter()
-        .find(|c| c.id == agent.completion_id)
+        .find(|c| c.id == completion_id)
         .ok_or_else(|| {
-            MissingReference::new(format!(
-                "completion `{}` for agent `{}` missing",
-                agent.completion_id, agent.id
-            ))
-            .into()
+            MissingReference::new(format!("unknown completion id `{completion_id}`")).into()
         })
+}
+
+fn find_completion_for_agent<'a>(
+    inner: &'a SondaSettingsFile,
+    agent: &'a SondaSettingsAgentEntry,
+) -> Result<&'a SondaSettingsCompletionEntry> {
+    find_completion_by_id(inner, agent.completion_id.as_str()).map_err(|_| {
+        MissingReference::new(format!(
+            "completion `{}` for agent `{}` missing",
+            agent.completion_id, agent.id
+        ))
+        .into()
+    })
+}
+
+fn toml_value_to_json(value: &toml::Value) -> Value {
+    match value {
+        toml::Value::String(s) => Value::String(s.clone()),
+        toml::Value::Integer(i) => Value::Number((*i).into()),
+        toml::Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+        toml::Value::Boolean(b) => Value::Bool(*b),
+        toml::Value::Datetime(dt) => Value::String(dt.to_string()),
+        toml::Value::Array(items) => {
+            Value::Array(items.iter().map(toml_value_to_json).collect())
+        }
+        toml::Value::Table(table) => Value::Object(
+            table
+                .iter()
+                .map(|(k, v)| (k.clone(), toml_value_to_json(v)))
+                .collect(),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -509,8 +484,13 @@ mod tests {
 
     use std::collections::HashMap;
 
+    use async_trait::async_trait;
+    use futures::Stream;
+    use moray_core::{
+        ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,
+        ChatCompletionResponseChunk, MorayError, ToolManifest,
+    };
     use moray_extensions::auths::AlwaysAsking;
-    use moray_extensions::completions::OpenAIChatCompletion;
     use crate::SondaCompletionRegistration;
     use crate::transcripts::SondaSessionTranscripts;
     use tempfile::tempdir;
@@ -542,10 +522,33 @@ mod tests {
         SondaSettingsStore::load(&missing_bundled_path(user_path), user_path)
     }
 
-    fn testing_completion_registration() -> SondaCompletionRegistration {
-        SondaCompletionRegistration::new(|endpoint| {
-            Ok(Arc::new(OpenAIChatCompletion::new(endpoint)))
-        })
+    struct StubCompletion;
+
+    #[async_trait]
+    impl ChatCompletion for StubCompletion {
+        async fn completion(
+            &self,
+            _messages: &[ChatCompletionRequestMessage],
+            _tools: &[ToolManifest],
+            _stream: bool,
+        ) -> std::result::Result<
+            std::pin::Pin<
+                Box<dyn Stream<Item = std::result::Result<ChatCompletionResponseChunk, MorayError>> + Send>,
+            >,
+            MorayError,
+        > {
+            Ok(Box::pin(futures::stream::once(async {
+                Ok(ChatCompletionResponseChunk::Done {
+                    reason: ChatCompletionFinishReason::Stop,
+                })
+            })))
+        }
+    }
+
+    fn testing_completion_registrations() -> Vec<SondaCompletionRegistration> {
+        vec![SondaCompletionRegistration::new("openai", |_entry| {
+            Ok(Arc::new(StubCompletion))
+        })]
     }
 
     fn build_test_sonda(server_path: &Path, sessions_path: &Path) -> crate::error::Result<()> {
@@ -571,7 +574,7 @@ mod tests {
         let session_workspace = Arc::new(crate::SondaSessionWorkspace::new(sessions_dir.clone()));
         let _ = SondaBuilder::new()
             .settings(settings_store)
-            .completion_registration(testing_completion_registration())
+            .completion_registrations(testing_completion_registrations())
             .skill_center(skill_center)
             .skill_hub(skill_hub)
             .session_catalog(session_catalog)
@@ -595,6 +598,7 @@ mod tests {
         r#"
 [[completions]]
 id = "a1b2c3d4"
+provider = "openai"
 name = "Test completion"
 base_url = "http://127.0.0.1:9/v1"
 model = "m1"
@@ -777,6 +781,7 @@ default_agent_id = "z9y8x7w6"
             r#"
 [[completions]]
 id = "a1b2c3d4"
+provider = "openai"
 name = "Test completion"
 base_url = "http://127.0.0.1:9/v1"
 model = "m1"
@@ -836,80 +841,27 @@ session_id = "tab-a"
         let store = SondaSessionCatalog::open(&sessions).unwrap();
         assert_eq!(store.get_session_agent_id("tab-a").unwrap(), "z9y8x7w6");
         let settings = open_test_store(&server).unwrap();
-        let ep = settings
-            .resolve_completion_endpoint("z9y8x7w6")
+        let cfg = settings
+            .completion_entry_for_agent("z9y8x7w6")
             .expect("same agent as default");
-        let ep_default = settings
-            .resolve_completion_endpoint("z9y8x7w6")
+        let cfg_default = settings
+            .completion_entry_for_agent("z9y8x7w6")
             .expect("default agent");
-        assert_eq!(ep.api_key, ep_default.api_key);
-        assert_eq!(ep.api_base, ep_default.api_base);
-        assert_eq!(ep.model, ep_default.model);
+        assert_eq!(cfg.config_str("api_key"), cfg_default.config_str("api_key"));
+        assert_eq!(cfg.config_str("base_url"), cfg_default.config_str("base_url"));
+        assert_eq!(cfg.config_str("model"), cfg_default.config_str("model"));
     }
 
-    const TEST_RESOLVE_ENV_CACHED: &str = "MORAY_DESKTOP_SETTINGS_TEST_CACHED";
-
     #[test]
-    fn resolve_reads_env_each_call() {
+    fn completion_entry_for_agent_returns_entry() {
         let dir = tempdir().unwrap();
         let server = dir.path().join("server.toml");
-        let sessions = dir.path().join("sessions.toml");
-        let body = sample_server_settings_toml().replace(
-            "api_key = \"literal-key\"\n",
-            &format!("api_key = \"env:{TEST_RESOLVE_ENV_CACHED}\"\n"),
-        );
-        std::fs::write(&server, body).unwrap();
-        std::fs::write(
-            &sessions,
-            r#"
-default_agent_id = "z9y8x7w6"
-"#,
-        )
-        .unwrap();
-        std::env::set_var(TEST_RESOLVE_ENV_CACHED, "ok-key");
-        load_settings_docs(&server, &sessions).unwrap();
+        std::fs::write(&server, sample_server_settings_toml()).unwrap();
         let settings = open_test_store(&server).unwrap();
-        let t = settings.resolve_completion_endpoint("z9y8x7w6").unwrap();
-        assert_eq!(t.api_key, "ok-key");
-        std::env::remove_var(TEST_RESOLVE_ENV_CACHED);
-        let r = settings.resolve_completion_endpoint("z9y8x7w6");
-        assert!(matches!(
-            r,
-            Err(SondaError::SettingsStore(SondaSettingsStoreError::BadEnvironment(
-                BadEnvironmentVariable::NotSet { name }
-            ))) if name == TEST_RESOLVE_ENV_CACHED
-        ));
-    }
-
-    const TEST_RESOLVE_ENV_MISSING: &str = "MORAY_DESKTOP_SETTINGS_TEST_MISSING";
-
-    #[test]
-    fn load_ok_when_api_key_env_missing_resolve_fails() {
-        let dir = tempdir().unwrap();
-        let server = dir.path().join("server.toml");
-        let sessions = dir.path().join("sessions.toml");
-        let body = sample_server_settings_toml().replace(
-            "api_key = \"literal-key\"\n",
-            &format!("api_key = \"env:{TEST_RESOLVE_ENV_MISSING}\"\n"),
-        );
-        std::fs::write(&server, body).unwrap();
-        std::fs::write(
-            &sessions,
-            r#"
-default_agent_id = "z9y8x7w6"
-"#,
-        )
-        .unwrap();
-        std::env::remove_var(TEST_RESOLVE_ENV_MISSING);
-        load_settings_docs(&server, &sessions).unwrap();
-        let settings = open_test_store(&server).unwrap();
-        let r = settings.resolve_completion_endpoint("z9y8x7w6");
-        assert!(matches!(
-            r,
-            Err(SondaError::SettingsStore(SondaSettingsStoreError::BadEnvironment(
-                BadEnvironmentVariable::NotSet { name }
-            ))) if name == TEST_RESOLVE_ENV_MISSING
-        ));
+        let entry = settings.completion_entry_for_agent("z9y8x7w6").unwrap();
+        assert_eq!(entry.id, "a1b2c3d4");
+        assert_eq!(entry.provider, "openai");
+        assert_eq!(entry.config_str("api_key"), Some("literal-key"));
     }
 
     #[test]
@@ -924,6 +876,7 @@ preamble_template = "bundled {{character}}"
 
 [[completions]]
 id = "a1b2c3d4"
+provider = "openai"
 name = "Bundled completion"
 base_url = "http://127.0.0.1:9/v1"
 model = "m1"
@@ -957,10 +910,16 @@ name = "Patched"
         let catalog = store.catalog();
         assert_eq!(catalog.agents[0].name, "Patched");
         assert_eq!(catalog.agents[0].completion_id, "a1b2c3d4");
-        assert_eq!(catalog.completions[0].name, "Bundled completion");
-        assert_eq!(catalog.completions[0].api_key.as_deref(), Some("user-key"));
-        let endpoint = store.resolve_completion_endpoint("z9y8x7w6").unwrap();
-        assert_eq!(endpoint.api_key, "user-key");
+        assert_eq!(
+            catalog.completions[0].config_str("name"),
+            Some("Bundled completion")
+        );
+        assert_eq!(
+            catalog.completions[0].config_str("api_key"),
+            Some("user-key")
+        );
+        let entry = store.completion_entry_for_agent("z9y8x7w6").unwrap();
+        assert_eq!(entry.config_str("api_key"), Some("user-key"));
     }
 
     #[test]
@@ -973,6 +932,7 @@ name = "Patched"
             r#"
 [[completions]]
 id = "a1b2c3d4"
+provider = "openai"
 name = "Test completion"
 base_url = "http://127.0.0.1:9/v1"
 model = "m1"
@@ -1011,6 +971,7 @@ allowed_tools = ["calc", "not_a_tool"]
             r#"
 [[completions]]
 id = "a1b2c3d4"
+provider = "openai"
 name = "Test completion"
 base_url = "http://127.0.0.1:9/v1"
 model = "m1"
@@ -1166,6 +1127,7 @@ parameters = '{}'
             r#"
 [[completions]]
 id = "a1b2c3d4"
+provider = "openai"
 name = "Test completion"
 base_url = "http://127.0.0.1:9/v1"
 model = "m1"
@@ -1196,6 +1158,7 @@ allowed_tools = ["shell", "calc"]
             r#"
 [[completions]]
 id = "aaaaaaaa"
+provider = "openai"
 name = "A"
 base_url = "http://127.0.0.1:9/v1"
 model = "m1"
@@ -1203,6 +1166,7 @@ api_key = "key-a"
 
 [[completions]]
 id = "bbbbbbbb"
+provider = "openai"
 name = "B"
 base_url = "http://127.0.0.1:9/v1"
 model = "m2"

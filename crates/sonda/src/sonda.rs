@@ -358,7 +358,7 @@ impl Sonda {
 
 pub struct SondaBuilder {
     settings_store: Option<Arc<SondaSettingsStore>>,
-    completion_registration: Option<SondaCompletionRegistration>,
+    completion_registrations: Option<Vec<SondaCompletionRegistration>>,
     skill_center: Option<SkillCenter>,
     skill_hub: Option<SkillHub>,
     session_catalog: Option<Arc<SondaSessionCatalog>>,
@@ -380,7 +380,7 @@ impl SondaBuilder {
     pub fn new() -> Self {
         Self {
             settings_store: None,
-            completion_registration: None,
+            completion_registrations: None,
             skill_center: None,
             skill_hub: None,
             session_catalog: None,
@@ -398,11 +398,11 @@ impl SondaBuilder {
         self
     }
 
-    pub fn completion_registration(
+    pub fn completion_registrations(
         mut self,
-        completion_registration: SondaCompletionRegistration,
+        completion_registrations: Vec<SondaCompletionRegistration>,
     ) -> Self {
-        self.completion_registration = Some(completion_registration);
+        self.completion_registrations = Some(completion_registrations);
         self
     }
 
@@ -457,13 +457,13 @@ impl SondaBuilder {
             .settings_store
             .ok_or_else(|| error_missing_field("settings_store"))?;
 
-        let completion_registration = self
-            .completion_registration
-            .ok_or_else(|| error_missing_field("completion_registration"))?;
+        let completion_registrations = self
+            .completion_registrations
+            .ok_or_else(|| error_missing_field("completion_registrations"))?;
         let completion_factory = Arc::new(SondaCompletionFactory::new(
             settings_store.clone(),
-            completion_registration,
-        ));
+            completion_registrations,
+        )?);
 
         let skill_center = self
             .skill_center

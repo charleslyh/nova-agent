@@ -68,8 +68,8 @@ async fn settings_get_catalog(State(sonda): State<Arc<Sonda>>) -> impl IntoRespo
         .completions
         .into_iter()
         .map(|c| CompletionStub {
-            id: c.id,
-            name: c.name,
+            id: c.id.clone(),
+            name: c.config_str("name").unwrap_or("").to_string(),
         })
         .collect();
 
