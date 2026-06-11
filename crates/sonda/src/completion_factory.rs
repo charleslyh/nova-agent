@@ -10,12 +10,12 @@ use crate::SondaSettingsStore;
 
 /// Builds a [`ChatCompletion`] from a resolved settings [`Endpoint`].
 pub struct SondaCompletionRegistration {
-    build: Box<dyn Fn(Endpoint) -> Arc<dyn ChatCompletion> + Send + Sync>,
+    build: Box<dyn Fn(Endpoint) -> Result<Arc<dyn ChatCompletion>> + Send + Sync>,
 }
 
 impl SondaCompletionRegistration {
     pub fn new(
-        build: impl Fn(Endpoint) -> Arc<dyn ChatCompletion> + Send + Sync + 'static,
+        build: impl Fn(Endpoint) -> Result<Arc<dyn ChatCompletion>> + Send + Sync + 'static,
     ) -> Self {
         Self {
             build: Box::new(build),
@@ -42,6 +42,6 @@ impl SondaCompletionFactory {
 
     pub fn create_completion(&self, agent_id: &str) -> Result<Arc<dyn ChatCompletion>> {
         let endpoint = self.settings_store.resolve_completion_endpoint(agent_id)?;
-        Ok((self.registration.build)(endpoint))
+        (self.registration.build)(endpoint)
     }
 }

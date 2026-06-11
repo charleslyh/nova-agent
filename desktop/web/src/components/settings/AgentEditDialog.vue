@@ -158,7 +158,12 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(["close"]);
+const emit = defineEmits(["close", "deleted"]);
+
+function hasAgentId(agent) {
+  const id = agent?.id;
+  return id != null && id !== "";
+}
 
 const actionError = ref("");
 const deleteConfirmOpen = ref(false);
@@ -270,18 +275,20 @@ async function onSave() {
 }
 
 function onDelete() {
-  if (!props.agent?.id || !props.deleteAgent || deleting.value) return;
+  if (!hasAgentId(props.agent) || !props.deleteAgent || deleting.value) return;
   actionError.value = "";
   deleteConfirmOpen.value = true;
 }
 
 async function executeDelete() {
-  if (!props.agent?.id || !props.deleteAgent || deleting.value) return;
+  if (!hasAgentId(props.agent) || !props.deleteAgent || deleting.value) return;
+  const agentId = props.agent.id;
   deleting.value = true;
   actionError.value = "";
   try {
-    await props.deleteAgent(props.agent.id);
+    await props.deleteAgent(agentId);
     deleteConfirmOpen.value = false;
+    emit("deleted", agentId);
     emit("close");
   } catch (e) {
     actionError.value = e?.message || "删除 Agent 失败";

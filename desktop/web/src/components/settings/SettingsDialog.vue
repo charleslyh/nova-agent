@@ -95,8 +95,13 @@
             <div v-if="selectedNavId === 'agents'" class="agents-panel">
               <p v-if="createAgentError" class="error">{{ createAgentError }}</p>
               <div class="agents-toolbar">
-                <button type="button" class="agents-create-btn" @click="startCreateAgent">
-                  新建 Agent
+                <button
+                  type="button"
+                  class="agents-create-btn"
+                  :disabled="creatingAgent"
+                  @click="startCreateAgent"
+                >
+                  {{ creatingAgent ? "创建中…" : "新建 Agent" }}
                 </button>
               </div>
               <div class="tile-row">
@@ -269,6 +274,7 @@
       :save-agent="saveAgent"
       :delete-agent="deleteAgent"
       @close="closeEdit"
+      @deleted="closeEdit"
     />
   </div>
 </template>
@@ -283,6 +289,13 @@ const navEntries = [
   { id: "agents", label: "Agents" },
   { id: "skills", label: "Skills" }
 ];
+
+const DEFAULT_NEW_AGENT = {
+  name: "新 Agent",
+  allowedTools: [],
+  character: null,
+  desc: null
+};
 
 const props = defineProps({
   open: { type: Boolean, required: true },
@@ -361,6 +374,7 @@ const skillsSubTab = ref("installed");
 const uninstallingSkillId = ref(null);
 const uninstallError = ref("");
 const createAgentError = ref("");
+const creatingAgent = ref(false);
 const pendingUninstallSkill = ref(null);
 
 const inSkillDetail = computed(() => viewingSkillId.value != null);
@@ -493,23 +507,24 @@ function closeEdit() {
 }
 
 async function startCreateAgent() {
+  if (creatingAgent.value) return;
   const completionId = props.settingsCatalog?.completions?.[0]?.id;
   if (!completionId) {
     createAgentError.value = "未配置可用模型，无法创建 Agent";
     return;
   }
   createAgentError.value = "";
+  creatingAgent.value = true;
   try {
     await props.createAgent({
-      name: "新 Agent",
       completionId,
-      allowedTools: [],
-      character: null,
-      desc: null
+      ...DEFAULT_NEW_AGENT
     });
   } catch (e) {
     createAgentError.value = e?.message || "创建 Agent 失败";
     console.error(e);
+  } finally {
+    creatingAgent.value = false;
   }
 }
 </script>

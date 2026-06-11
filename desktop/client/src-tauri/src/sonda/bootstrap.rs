@@ -109,7 +109,9 @@ fn create_skill_center(paths: &SondaRuntimePaths) -> Result<SkillCenter, SondaBo
 }
 
 fn completion_registration() -> SondaCompletionRegistration {
-    SondaCompletionRegistration::new(|endpoint| Arc::new(OpenAIChatCompletion::new(endpoint)))
+    SondaCompletionRegistration::new(|endpoint| {
+        Ok(Arc::new(OpenAIChatCompletion::new(endpoint)))
+    })
 }
 
 fn tool_registrations(

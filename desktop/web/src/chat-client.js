@@ -181,7 +181,13 @@ export async function createHttpChatClient() {
       });
     },
 
-    async createAgent({ name, completion_id: completionId, allowed_tools: allowedTools, character, desc }) {
+    async createAgent({
+      name,
+      completion_id: completionId,
+      allowed_tools: allowedTools,
+      character,
+      desc
+    } = {}) {
       try {
         return await request(`${baseUrl}/settings/agents`, {
           method: "POST",

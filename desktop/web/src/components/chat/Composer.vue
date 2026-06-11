@@ -152,8 +152,8 @@ function onCompositionEnd() {
 }
 
 async function onPickImages() {
-  if (isRunning.value || attachAtLimit.value) return;
   pickError.value = "";
+  if (isRunning.value || attachAtLimit.value) return;
   try {
     const selected = await open({
       multiple: true,

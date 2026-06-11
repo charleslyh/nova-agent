@@ -144,7 +144,7 @@ impl TurnInput {
             return self.text.clone();
         }
         let mut parts = Vec::new();
-        if !self.text.trim().is_empty() {
+        if !self.text.is_empty() {
             parts.push(self.text.clone());
         }
         for resource in &self.resources {

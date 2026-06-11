@@ -183,24 +183,24 @@ impl SondaSettingsStore {
                 character,
                 desc,
             });
+            save_locked(self, &inner)?;
         }
 
-        save(self)?;
         Ok(agent_id)
     }
 
     pub fn delete_agent(&self, agent_id: &str) -> crate::error::Result<()> {
         let agent_id = require_argument_nonempty(agent_id, "agent_id")?;
         let mut inner = self.inner.write();
-        if !inner.agents.iter().any(|a| a.id == agent_id) {
-            return Err(InvalidArguments::new("agent_id", "corresponding agent not found").into());
-        }
         if inner.agents.len() <= 1 {
             return Err(InvalidContent::new("cannot delete the last agent").into());
         }
+        let before = inner.agents.len();
         inner.agents.retain(|a| a.id != agent_id);
-        drop(inner);
-        save(self)?;
+        if inner.agents.len() == before {
+            return Err(InvalidArguments::new("agent_id", "corresponding agent not found").into());
+        }
+        save_locked(self, &inner)?;
         Ok(())
     }
 
@@ -413,20 +413,23 @@ fn pick_nonempty(patch: String, base: String) -> String {
     if patch.is_empty() { base } else { patch }
 }
 
-fn save(settings: &SondaSettingsStore) -> Result<()> {
+fn save_locked(settings: &SondaSettingsStore, inner: &SondaSettingsFile) -> Result<()> {
     let path = settings.user_path.as_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|source| FileIoError::new("mkdir", parent.to_path_buf(), source))?;
     }
-    let inner = settings.inner.read();
-    let s = toml::to_string_pretty(&*inner).map_err(|e| {
+    let s = toml::to_string_pretty(inner).map_err(|e| {
         InvalidContent::new(format!("invalid settings file: {e}"))
     })?;
-    drop(inner);
     std::fs::write(path, s)
         .map_err(|source| FileIoError::new("write", path.to_path_buf(), source))?;
     Ok(())
+}
+
+fn save(settings: &SondaSettingsStore) -> Result<()> {
+    let inner = settings.inner.read();
+    save_locked(settings, &inner)
 }
 
 #[derive(Debug)]
@@ -545,7 +548,9 @@ mod tests {
     }
 
     fn testing_completion_registration() -> SondaCompletionRegistration {
-        SondaCompletionRegistration::new(|endpoint| Arc::new(OpenAIChatCompletion::new(endpoint)))
+        SondaCompletionRegistration::new(|endpoint| {
+            Ok(Arc::new(OpenAIChatCompletion::new(endpoint)))
+        })
     }
 
     fn build_test_sonda(server_path: &Path, sessions_path: &Path) -> crate::error::Result<()> {
