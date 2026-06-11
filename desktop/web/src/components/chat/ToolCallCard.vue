@@ -318,6 +318,16 @@ function statusIconClass(status) {
   color: #3b82f6;
 }
 
+.status-icon--running svg {
+  animation: status-icon-spin 0.9s linear infinite;
+}
+
+@keyframes status-icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .status-icon--success {
   color: #16a34a;
 }
