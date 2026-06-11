@@ -172,9 +172,11 @@ async function onPickImages() {
     if (selected == null) return;
     const paths = Array.isArray(selected) ? selected : [selected];
     const normalized = paths.filter((p) => typeof p === "string" && p.length > 0);
-    if (normalized.length) {
-      emit("add-attachments", normalized);
+    if (!normalized.length) {
+      pickError.value = "未选择到有效的图片路径";
+      return;
     }
+    emit("add-attachments", normalized);
   } catch (error) {
     pickError.value = error?.message || "打开图片选择器失败";
     console.error("image picker failed", error);

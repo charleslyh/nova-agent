@@ -164,14 +164,15 @@ impl SondaSessionCatalog {
     ///
     /// Caller must ensure `agent_id` references a valid agent in `server.toml` when applicable.
     pub fn get_session_sub_agents(&self, session_id: &str) -> Result<Vec<SessionSubAgentEntry>> {
-        ensure_session_row(self, session_id)?;
         let inner = self.data.read();
-        Ok(inner
-            .entries
-            .iter()
-            .find(|e| e.session_id == session_id)
-            .map(|e| e.sub_agents.clone())
-            .unwrap_or_default())
+        let entry = inner.entries.iter().find(|e| e.session_id == session_id);
+        match entry {
+            Some(e) => Ok(e.sub_agents.clone()),
+            None => Err(
+                MissingReference::new(format!("no [[entries]] row for session_id `{session_id}`"))
+                    .into(),
+            ),
+        }
     }
 
     pub fn get_session_agents(&self, session_id: &str) -> Result<SessionAgentsConfig> {

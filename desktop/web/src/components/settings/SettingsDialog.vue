@@ -535,9 +535,7 @@ async function startCreateAgent() {
     createAgentError.value = e?.message || "创建 Agent 失败";
     console.error(e);
   } finally {
-    if (createAgentAlive) {
-      creatingAgent.value = false;
-    }
+    creatingAgent.value = false;
   }
 }
 </script>

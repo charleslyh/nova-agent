@@ -159,12 +159,13 @@ function hasUserText(user) {
 function userImageResources(user, sessionDir) {
   if (!user || !Array.isArray(user.resources)) return [];
   const dir = typeof sessionDir === "string" ? sessionDir.trim() : "";
-  return user.resources.reduce((images, r) => {
-    if (r?.kind !== "image" || typeof r.path !== "string") return images;
-    const src = resolveUserImageSrc(r.path, dir);
-    if (src) images.push({ path: r.path, src });
-    return images;
-  }, []);
+  return user.resources
+    .filter((r) => r?.kind === "image" && typeof r.path === "string")
+    .map((r) => {
+      const src = resolveUserImageSrc(r.path, dir);
+      return src ? { path: r.path, src } : null;
+    })
+    .filter(Boolean);
 }
 
 function shouldShowStreamItem(item) {
