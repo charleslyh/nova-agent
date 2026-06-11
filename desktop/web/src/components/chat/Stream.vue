@@ -365,31 +365,6 @@ watch(
   box-sizing: border-box;
 }
 
-.stream::-webkit-scrollbar {
-  width: 10px;
-}
-
-.stream::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.stream::-webkit-scrollbar-thumb {
-  background: rgba(120, 120, 125, 0.42);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-
-.stream::-webkit-scrollbar-thumb:hover {
-  background: rgba(95, 95, 100, 0.58);
-  background-clip: content-box;
-}
-
-.stream {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(120, 120, 125, 0.42) transparent;
-}
-
 .msg-row {
   display: flex;
   width: 100%;
