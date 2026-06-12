@@ -59,6 +59,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from "vue";
 import ChannelAgentField from "@/components/channels/ChannelAgentField.vue";
+import { CHANNEL_TYPE_WECOM } from "@/channelTypes.js";
 
 const props = defineProps({
   channelId: { type: String, default: "" },
@@ -208,13 +209,12 @@ async function handleSave() {
     const botId = payload.bot_id;
     if (!botId) {
       error.value = "请填写 Bot ID";
-      saving.value = false;
       return;
     }
     if (props.isNew) {
       const created = await props.createChannel({
         name: botId,
-        type: "wecom",
+        type: CHANNEL_TYPE_WECOM,
         data: payload,
       });
       await applySessionAgent(created.session_id);

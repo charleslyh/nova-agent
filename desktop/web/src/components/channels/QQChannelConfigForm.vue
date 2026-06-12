@@ -59,6 +59,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from "vue";
 import ChannelAgentField from "@/components/channels/ChannelAgentField.vue";
+import { CHANNEL_TYPE_QQ } from "@/channelTypes.js";
 
 const props = defineProps({
   channelId: { type: String, default: "" },
@@ -207,13 +208,12 @@ async function handleSave() {
     const appId = payload.app_id;
     if (!appId) {
       error.value = "请填写 App ID";
-      saving.value = false;
       return;
     }
     if (props.isNew) {
       const created = await props.createChannel({
         name: appId,
-        type: "qq",
+        type: CHANNEL_TYPE_QQ,
         data: payload,
       });
       await applySessionAgent(created.session_id);

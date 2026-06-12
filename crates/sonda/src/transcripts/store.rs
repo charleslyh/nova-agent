@@ -221,12 +221,13 @@ impl SondaSessionTranscripts {
         if path.exists() {
             return Err(SondaSessionTranscriptsError::AlreadyExists);
         }
+        let session_dir = path.parent().ok_or_else(|| {
+            SondaSessionTranscriptsError::Message("invalid transcript path".into())
+        })?;
+        ensure_session_dirs(session_dir).map_err(|e| {
+            SondaSessionTranscriptsError::Message(format!("create session dirs: {e}"))
+        })?;
         jsonl::create_transcript_file(&path).map_err(backend_err)?;
-        if let Some(session_dir) = path.parent() {
-            ensure_session_dirs(session_dir).map_err(|e| {
-                SondaSessionTranscriptsError::Message(format!("create session dirs: {e}"))
-            })?;
-        }
         Ok(())
     }
 

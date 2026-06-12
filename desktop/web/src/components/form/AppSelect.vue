@@ -87,6 +87,13 @@ const props = defineProps({
 
 const emit = defineEmits(["update:modelValue"]);
 
+/** Gap between trigger and dropdown menu (px). */
+const MENU_GAP_PX = 4;
+/** Maximum dropdown height before scrolling (px). */
+const MENU_MAX_HEIGHT_PX = 240;
+/** Prefer opening upward when space below is less than this (px). */
+const MENU_FLIP_THRESHOLD_PX = 120;
+
 const rootRef = ref(null);
 const open = ref(false);
 const menuStyle = ref({});
@@ -102,14 +109,12 @@ function updateMenuPosition() {
   const el = rootRef.value;
   if (!el) return;
   const rect = el.getBoundingClientRect();
-  const gap = 4;
-  const maxHeight = 240;
-  const spaceBelow = window.innerHeight - rect.bottom - gap;
-  const spaceAbove = rect.top - gap;
-  const openUp = spaceBelow < 120 && spaceAbove > spaceBelow;
+  const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - MENU_GAP_PX);
+  const spaceAbove = Math.max(0, rect.top - MENU_GAP_PX);
+  const openUp = spaceBelow < MENU_FLIP_THRESHOLD_PX && spaceAbove > spaceBelow;
   const maxMenuHeight = openUp
-    ? Math.min(maxHeight, spaceAbove)
-    : Math.min(maxHeight, spaceBelow);
+    ? Math.min(MENU_MAX_HEIGHT_PX, spaceAbove)
+    : Math.min(MENU_MAX_HEIGHT_PX, spaceBelow);
   const base = {
     left: `${Math.round(rect.left)}px`,
     width: `${Math.round(rect.width)}px`,
@@ -117,8 +122,8 @@ function updateMenuPosition() {
   };
 
   menuStyle.value = openUp
-    ? { ...base, bottom: `${Math.round(window.innerHeight - rect.top + gap)}px` }
-    : { ...base, top: `${Math.round(rect.bottom + gap)}px` };
+    ? { ...base, bottom: `${Math.round(window.innerHeight - rect.top + MENU_GAP_PX)}px` }
+    : { ...base, top: `${Math.round(rect.bottom + MENU_GAP_PX)}px` };
 }
 
 function openMenu() {
