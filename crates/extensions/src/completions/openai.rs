@@ -31,6 +31,7 @@ use moray_core::{
     ChatCompletionResponseChunk, MorayError, ToolCallRequest, ToolManifest,
 };
 use serde::Serialize;
+use serde_json::Value;
 use tracing::{debug, info, instrument, warn};
 
 const PROTOCOL_LOG_LIMIT: usize = 32_768;
@@ -113,7 +114,7 @@ fn to_request_messages(msgs: &[ChatCompletionRequestMessage]) -> Vec<AoRequestMe
                                 id: t.call_id.clone(),
                                 function: FunctionCall {
                                     name: t.name.clone(),
-                                    arguments: t.arguments.clone(),
+                                    arguments: serialize_tool_call_args(&t.arguments),
                                 },
                             })
                         })
@@ -553,7 +554,7 @@ impl ChatCompletion for OpenAIChatCompletion {
                         .map(|(_, (call_id, name, arguments))| ToolCallRequest {
                             call_id,
                             name,
-                            arguments,
+                            arguments: parse_tool_call_args(&arguments),
                         })
                         .filter(|t| !t.name.is_empty())
                         .collect();
@@ -663,7 +664,7 @@ fn build_response_protocol(
             .map(|tool_call| LlmToolCallProtocol {
                 id: tool_call.call_id.clone(),
                 name: tool_call.name.clone(),
-                arguments: tool_call.arguments.clone(),
+                arguments: serialize_tool_call_args(&tool_call.arguments),
             })
             .collect(),
         finish_reason: finish_reason.map(|reason| format!("{reason:?}")),
@@ -709,6 +710,22 @@ fn log_llm_completed(
         response = %protocol_json(response_protocol),
         "llm response protocol"
     );
+}
+
+fn parse_tool_call_args(raw: &str) -> Value {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Value::Object(serde_json::Map::new());
+    }
+    serde_json::from_str(trimmed).unwrap_or_else(|_| Value::String(raw.to_string()))
+}
+
+fn serialize_tool_call_args(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Null => "{}".to_string(),
+        other => serde_json::to_string(other).unwrap_or_else(|_| "{}".to_string()),
+    }
 }
 
 fn merge_tool_chunk(buf: &mut HashMap<u32, (String, String, String)>, tc: &AoMessageToolCallChunk) {

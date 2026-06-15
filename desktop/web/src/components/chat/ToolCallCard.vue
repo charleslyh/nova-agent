@@ -227,6 +227,9 @@ function onImageError() {
 
 function formatToolArguments(argumentsText) {
   if (argumentsText == null) return "(empty)";
+  if (typeof argumentsText === "object") {
+    return JSON.stringify(argumentsText, null, 2);
+  }
   const trimmed = String(argumentsText).trim();
   if (!trimmed) return "(empty)";
   try {

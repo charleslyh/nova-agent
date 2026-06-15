@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    parse_tool_call_args, MorayError, ToolCallRequest, ToolCallResult, ToolCallStatus,
+    MorayError, ToolCallRequest, ToolCallResult, ToolCallStatus,
     ToolManifest,
 };
 
@@ -73,7 +73,7 @@ impl From<ToolboxError> for MorayError {
 pub enum ToolCallEventKind {
     Requested {
         name: String,
-        arguments: String,
+        arguments: Value,
     },
 
     Started,
@@ -101,7 +101,7 @@ pub struct ToolCallEvent {
 }
 
 impl ToolCallEvent {
-    pub fn requested(call_id: String, name: String, arguments: String) -> Self {
+    pub fn requested(call_id: String, name: String, arguments: Value) -> Self {
         Self {
             call_id,
             kind: ToolCallEventKind::Requested { name, arguments },
@@ -408,7 +408,6 @@ async fn run_call(
     let call_id = tracker.request.call_id.clone();
     let name = tracker.request.name.clone();
     let arguments = tracker.request.arguments.clone();
-    let args_value = parse_tool_call_args(&arguments);
 
     if !tracker
         .emit(ToolCallEvent::requested(
@@ -441,7 +440,7 @@ async fn run_call(
                 allowed = auth.request(
                     call_id.as_str(),
                     name.as_str(),
-                    &args_value,
+                    &arguments,
                     Arc::clone(&tracker) as Arc<dyn ToolCallResponder>,
                 ) => allowed,
             }
@@ -476,7 +475,7 @@ async fn run_call(
             finish_canceled(&tracker).await;
             return;
         }
-        res = tool.call(args_value, tracker.as_ref()) => res,
+        res = tool.call(arguments, tracker.as_ref()) => res,
     } {
         Ok(()) => ToolCallStatus::Success,
         Err(e) => {
@@ -645,13 +644,13 @@ mod serde_tests {
 
     #[test]
     fn flatten_serializes_kind_fields_at_top_level() {
-        let ev = ToolCallEvent::requested("c1".into(), "echo".into(), r#""hi""#.into());
+        let ev = ToolCallEvent::requested("c1".into(), "echo".into(), json!("hi"));
         let v = serde_json::to_value(&ev).unwrap();
         assert_eq!(v, json!({
             "call_id": "c1",
             "type": "requested",
             "name": "echo",
-            "arguments": "\"hi\""
+            "arguments": "hi"
         }));
         assert!(v.get("kind").is_none());
     }
@@ -875,7 +874,7 @@ mod tests {
         turn: CancellationToken,
         call_id: &str,
         name: &str,
-        arguments: &str,
+        arguments: Value,
     ) -> Vec<ToolCallEvent> {
         let (sink, mut rx) = MpscToolCallEventSink::pair(16);
         let group = tb.begin_group(sink, turn).await;
@@ -884,7 +883,7 @@ mod tests {
             ToolCallRequest {
                 call_id: call_id.to_string(),
                 name: name.to_string(),
-                arguments: arguments.to_string(),
+                arguments,
             },
         )
         .await
@@ -949,7 +948,7 @@ mod tests {
         let collect_fut = tokio::spawn({
             let tb = tb_arc.clone();
             async move {
-                collect_call_events(tb, CancellationToken::new(), "c1", "echo", r#""hi""#).await
+                collect_call_events(tb, CancellationToken::new(), "c1", "echo", json!("hi")).await
             }
         });
         await_pending(policy.as_ref(), "c1").await;
@@ -961,7 +960,7 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                ToolCallEvent::requested("c1".into(), "echo".into(), r#""hi""#.into()),
+                ToolCallEvent::requested("c1".into(), "echo".into(), json!("hi")),
                 ToolCallEvent::extra(
                     "c1".into(),
                     json!({ "tool_name": "echo", "arguments": "hi" }),
@@ -981,7 +980,7 @@ mod tests {
         let collect_fut = tokio::spawn({
             let tb = tb_arc.clone();
             async move {
-                collect_call_events(tb, CancellationToken::new(), "c1", "echo", "{}").await
+                collect_call_events(tb, CancellationToken::new(), "c1", "echo", json!({})).await
             }
         });
         await_pending(policy.as_ref(), "c1").await;
@@ -993,7 +992,7 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                ToolCallEvent::requested("c1".into(), "echo".into(), "{}".into()),
+                ToolCallEvent::requested("c1".into(), "echo".into(), json!({})),
                 ToolCallEvent::extra(
                     "c1".into(),
                     json!({ "tool_name": "echo", "arguments": {} }),
@@ -1012,7 +1011,7 @@ mod tests {
         let collect_fut = tokio::spawn({
             let tb = tb_arc.clone();
             async move {
-                collect_call_events(tb, CancellationToken::new(), "c2", "bad", "{}").await
+                collect_call_events(tb, CancellationToken::new(), "c2", "bad", json!({})).await
             }
         });
         await_pending(policy.as_ref(), "c2").await;
@@ -1027,7 +1026,7 @@ mod tests {
             ToolCallEvent {
                 call_id,
                 kind: ToolCallEventKind::Requested { name, arguments }
-            } if call_id == "c2" && name == "bad" && arguments == "{}"
+            } if call_id == "c2" && name == "bad" && arguments == &json!({})
         ));
         assert!(matches!(
             &events[1],
@@ -1064,12 +1063,12 @@ mod tests {
                 .build(),
         );
         let out =
-            collect_call_events(tb.clone(), CancellationToken::new(), "c0", "echo", r#""z""#)
+            collect_call_events(tb.clone(), CancellationToken::new(), "c0", "echo", json!("z"))
                 .await;
         assert_eq!(
             out,
             vec![
-                ToolCallEvent::requested("c0".into(), "echo".into(), r#""z""#.into()),
+                ToolCallEvent::requested("c0".into(), "echo".into(), json!("z")),
                 ToolCallEvent::started("c0".into()),
                 ToolCallEvent::payload("c0".into(), r#"echo:"z""#.into()),
                 ToolCallEvent::finished("c0".into(), ToolCallStatus::Success)
@@ -1081,12 +1080,12 @@ mod tests {
     async fn allow_decision_emits_requested_then_started_then_finished() {
         let tb = Arc::new(make_toolbox(Arc::new(StaticPolicy(StaticDecision::Allow))));
         let out =
-            collect_call_events(tb.clone(), CancellationToken::new(), "c3", "echo", r#""x""#)
+            collect_call_events(tb.clone(), CancellationToken::new(), "c3", "echo", json!("x"))
                 .await;
         assert_eq!(
             out,
             vec![
-                ToolCallEvent::requested("c3".into(), "echo".into(), r#""x""#.into()),
+                ToolCallEvent::requested("c3".into(), "echo".into(), json!("x")),
                 ToolCallEvent::started("c3".into()),
                 ToolCallEvent::payload("c3".into(), r#"echo:"x""#.into()),
                 ToolCallEvent::finished("c3".into(), ToolCallStatus::Success)
@@ -1098,11 +1097,11 @@ mod tests {
     async fn deny_decision_emits_requested_then_finished_with_denied_marker() {
         let tb = Arc::new(make_toolbox(Arc::new(StaticPolicy(StaticDecision::Deny))));
         let out =
-            collect_call_events(tb.clone(), CancellationToken::new(), "c4", "echo", "{}").await;
+            collect_call_events(tb.clone(), CancellationToken::new(), "c4", "echo", json!({})).await;
         assert_eq!(
             out,
             vec![
-                ToolCallEvent::requested("c4".into(), "echo".into(), "{}".into()),
+                ToolCallEvent::requested("c4".into(), "echo".into(), json!({})),
                 ToolCallEvent::payload("c4".into(), TOOL_CALL_DENIED_BY_USER.into()),
                 ToolCallEvent::finished("c4".into(), ToolCallStatus::Error)
             ]
@@ -1137,7 +1136,7 @@ mod tests {
                 ToolCallRequest {
                     call_id: "cx".to_string(),
                     name: "echo".to_string(),
-                    arguments: "{}".to_string(),
+                    arguments: json!({}),
                 },
             )
             .await
@@ -1181,7 +1180,7 @@ mod tests {
                 ToolCallRequest {
                     call_id: "cy".to_string(),
                     name: "slow".to_string(),
-                    arguments: "{}".to_string(),
+                    arguments: json!({}),
                 },
             )
             .await

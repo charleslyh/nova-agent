@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 use moray_extensions::tools::WebFetchTool;
 use moray_core::Tool;
 use moray_sonda::SondaToolCatalog;
+use serde_json::Value;
 use cli_toolbox::CliToolbox;
 
 #[derive(Parser, Debug)]
@@ -64,19 +65,16 @@ fn build_cli_toolbox() -> Result<CliToolbox> {
     CliToolbox::new(catalog, tools).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
-fn parse_tool_args(args: Option<Vec<String>>) -> Result<String> {
+fn parse_tool_args(args: Option<Vec<String>>) -> Result<Value> {
     let Some(parts) = args.filter(|p| !p.is_empty()) else {
-        return Ok("{}".to_string());
+        return Ok(Value::Object(serde_json::Map::new()));
     };
     let raw = if parts.len() == 1 {
         parts[0].clone()
     } else {
         parts.join(" ")
     };
-    if serde_json::from_str::<serde_json::Value>(&raw).is_err() {
-        anyhow::bail!("Invalid JSON arguments");
-    }
-    Ok(raw)
+    serde_json::from_str(&raw).map_err(|_| anyhow::anyhow!("Invalid JSON arguments"))
 }
 
 #[tokio::main]
@@ -127,7 +125,7 @@ async fn handle_tool(toolbox: &CliToolbox, cmd: ToolCommand) -> Result<()> {
         ToolCommand::Run { name, args } => {
             let arguments = parse_tool_args(args)?;
             toolbox
-                .run(&name, &arguments)
+                .run(&name, arguments)
                 .await
                 .map_err(|e| anyhow::anyhow!("Tool '{name}' failed: {e}"))
         }

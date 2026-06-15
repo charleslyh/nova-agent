@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use moray_core::{
-    parse_tool_call_args, AgentFinishKind, AgentResponseEvent, ToolCallEventKind,
+    AgentFinishKind, AgentResponseEvent, ToolCallEventKind,
 };
 use moray_session::{AgentRole, SessionEvent, SessionEventKind};
 use tokio::sync::RwLock;
@@ -92,7 +92,7 @@ impl QqSessionOutbound {
                         PendingToolAuth {
                             tool_name: name.clone(),
                             display_name: display.clone(),
-                            arguments: parse_tool_call_args(&arguments),
+                            arguments: arguments.clone(),
                         },
                     );
                     self.state.tool_displays.insert(call_id, display);

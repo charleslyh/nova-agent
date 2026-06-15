@@ -25,24 +25,15 @@ pub struct ToolManifest {
 
 /// Tool call emitted by the model (finished stream) and tracked in assistant context.
 ///
-/// Aligns with OpenAI Chat Completions `function.arguments`: a JSON object **string**, not a parsed value.
-/// Produced by completion adapters when finalizing a model round, and by [`Toolbox::call_tool`] for
-/// [`ToolCallEventKind::Requested`].
+/// `arguments` is the semantic JSON value (typically an object) after completion adapters parse
+/// provider-specific wire forms. Produced when finalizing a model round, and by
+/// [`Toolbox::call_tool`] for [`ToolCallEventKind::Requested`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ToolCallRequest {
     pub call_id: String,
     pub name: String,
-    pub arguments: String,
-}
-
-/// Parse completion-layer `arguments` when entering toolbox / [`Tool::call`].
-pub fn parse_tool_call_args(raw: &str) -> Value {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Value::Object(serde_json::Map::new());
-    }
-    serde_json::from_str(trimmed).unwrap_or_else(|_| Value::String(raw.to_string()))
+    pub arguments: Value,
 }
 
 /// Shared internal type for completed tool-call outputs.

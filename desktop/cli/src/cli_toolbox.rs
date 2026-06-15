@@ -5,7 +5,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use moray_core::{parse_tool_call_args, MorayError, Tool, ToolCallResponder, ToolManifest};
+use moray_core::{MorayError, Tool, ToolCallResponder, ToolManifest};
 use moray_sonda::SondaToolCatalog;
 use serde_json::Value;
 
@@ -100,12 +100,11 @@ impl CliToolbox {
         }
     }
 
-    pub async fn run(&self, name: &str, arguments: &str) -> Result<(), MorayError> {
+    pub async fn run(&self, name: &str, arguments: Value) -> Result<(), MorayError> {
         let Some(tool) = self.tools.get(name) else {
             return Err(MorayError::Message(format!("unknown tool {name}")));
         };
-        let args = parse_tool_call_args(arguments);
-        tool.call(args, &PrintingResponder).await
+        tool.call(arguments, &PrintingResponder).await
     }
 }
 

@@ -19,6 +19,5 @@ pub use toolbox::{
     ToolboxBuilder, ToolboxError, TypedTool, TOOL_CALL_CANCELED, TOOL_CALL_DENIED_BY_USER,
 };
 pub use types::{
-    parse_tool_call_args, MorayError, ToolCallRequest, ToolCallResult, ToolCallStatus,
-    ToolManifest,
+    MorayError, ToolCallRequest, ToolCallResult, ToolCallStatus, ToolManifest,
 };

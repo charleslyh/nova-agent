@@ -159,6 +159,7 @@ mod tests {
     use super::*;
     use moray_core::{AgentFinishKind, ToolCallEvent, ToolCallStatus};
     use moray_session::{AgentRole, SessionAgentResponse, SessionEvent, SessionEventKind, TurnInput};
+    use serde_json::{json, Value};
 
     fn record(seq: u64, kind: SessionEventKind) -> SondaSessionEventRecord {
         SondaSessionEventRecord {
@@ -219,12 +220,12 @@ mod tests {
         }
     }
 
-    fn tc(call_id: &str, name: &str, args: &str) -> AgentResponseEvent {
+    fn tc(call_id: &str, name: &str, args: Value) -> AgentResponseEvent {
         AgentResponseEvent::CompletionResponse {
             chunk: ChatCompletionResponseChunk::ToolCall(ToolCallRequest {
                 call_id: call_id.into(),
                 name: name.into(),
-                arguments: args.into(),
+                arguments: args,
             }),
         }
     }
@@ -353,7 +354,7 @@ mod tests {
         let records = vec![
             user(1, "hi"),
             agent(2, "leader", AgentRole::Leader, td()),
-            agent(3, "leader", AgentRole::Leader, tc("c1", "echo", "{}")),
+            agent(3, "leader", AgentRole::Leader, tc("c1", "echo", json!({}))),
             agent(4, "leader", AgentRole::Leader, done_stop()),
             agent(5, "leader", AgentRole::Leader, tff("c1", ToolCallStatus::Canceled)),
         ];
@@ -372,7 +373,7 @@ mod tests {
         let records = vec![
             user(1, "hi"),
             agent(2, "leader", AgentRole::Leader, td()),
-            agent(3, "leader", AgentRole::Leader, tc("c1", "echo", "{}")),
+            agent(3, "leader", AgentRole::Leader, tc("c1", "echo", json!({}))),
             agent(4, "leader", AgentRole::Leader, done_stop()),
             agent(5, "leader", AgentRole::Leader, tcf("c1", "ok")),
             agent(6, "leader", AgentRole::Leader, tff("c1", ToolCallStatus::Success)),

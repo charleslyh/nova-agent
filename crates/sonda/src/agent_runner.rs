@@ -439,6 +439,7 @@ impl AgentRunner for SondaAgentRunner {
 mod tests {
     use super::*;
     use moray_core::{ChatCompletionFinishReason, ToolCallRequest};
+    use serde_json::json;
 
     fn text_block(s: &str) -> AgentResponseEvent {
         AgentResponseEvent::CompletionResponse {
@@ -459,7 +460,7 @@ mod tests {
             chunk: ChatCompletionResponseChunk::ToolCall(ToolCallRequest {
                 call_id: "c1".into(),
                 name: "image_create".into(),
-                arguments: "{}".into(),
+                arguments: json!({}),
             }),
         }
     }
