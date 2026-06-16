@@ -38,6 +38,7 @@ pub(crate) fn sonda_error_response(err: SondaError) -> Response {
         SondaError::SessionCatalog(e) => session_catalog_http_status(e),
         SondaError::ChannelCatalog(e) => channel_catalog_http_status(e),
         SondaError::ToolCatalog(e) => tool_catalog_http_status(e),
+        SondaError::Skills(e) => internal_error_http_status(e),
     };
     response_with(status, message).into_response()
 }

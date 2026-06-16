@@ -7,10 +7,10 @@ use moray_extensions::auths::AlwaysAsking;
 use moray_extensions::completions::{Endpoint, OpenAIChatCompletion};
 use moray_extensions::context::CompositeContextEngineBuilder;
 use moray_extensions::preambles::{SkillsSection, TemplatedPreamblerBuilder};
+use moray_skills::SkillsManager;
 use moray_sonda::{
-    BadEnvironmentVariable, ContextBuilder, InvalidContent, SkillCenter, SkillFilterKind,
-    SondaCompletionRegistration, SondaError, SondaSettingsCompletionEntry, SondaSettingsStore,
-    RUN_SUB_AGENT_TOOL_NAME,
+    BadEnvironmentVariable, ContextBuilder, InvalidContent, SondaCompletionRegistration,
+    SondaError, SondaSettingsCompletionEntry, SondaSettingsStore, RUN_SUB_AGENT_TOOL_NAME,
 };
 use serde::Deserialize;
 
@@ -31,12 +31,12 @@ pub fn authorizer() -> Arc<dyn ToolCallAuthorizer> {
 
 pub fn context_builder(
     settings_store: Arc<SondaSettingsStore>,
-    skill_center: SkillCenter,
+    skills: SkillsManager,
 ) -> ContextBuilder {
     Arc::new(move |agent_id: &str, messages| {
         let agent_id = agent_id.to_string();
         let settings = settings_store.clone();
-        let skill_center = skill_center.clone();
+        let skills = skills.clone();
 
         let preambler = TemplatedPreamblerBuilder::default()
             .template(settings_store.preamble_template())
@@ -50,7 +50,7 @@ pub fn context_builder(
             .section(SkillsSection::new(move || {
                 // Re-read the skill catalog on every setup: skills may be installed or removed
                 // mid-session; the value is frozen for that run when the context engine runs setup.
-                skill_center.skills(SkillFilterKind::All)
+                skills.local().all()
             }))
             .build();
 

@@ -1,10 +1,10 @@
 import { ref } from "vue";
 
 /**
- * SkillHub search/install state for Settings → Skills hub tab.
- * @param {{ searchSkillHub: (q: string) => Promise<{ entries?: unknown[], from_remote?: boolean }>, installSkill: (slug: string, opts?: { force?: boolean }) => Promise<unknown>, listSkills: () => Promise<{ id: string }[]> }} client
+ * Skills UI state for Settings → Skills (local list + hub search/install).
+ * @param {{ local: { list: () => Promise<{ id: string, slug?: string }[]>, detail?: (id: string) => Promise<unknown> }, hub: { search: (q: string) => Promise<{ entries?: unknown[], from_remote?: boolean }> }, install: (slug: string, opts?: { force?: boolean }) => Promise<unknown>, uninstall: (skillId: string) => Promise<unknown> }} skills
  */
-export function useSkillHub(client) {
+export function useSkills(skills) {
   const hubQuery = ref("");
   const hubResults = ref([]);
   const hubLoading = ref(false);
@@ -32,7 +32,7 @@ export function useSkillHub(client) {
     hubLoading.value = true;
     hubError.value = "";
     try {
-      const body = await client.searchSkillHub(query);
+      const body = await skills.hub.search(query);
       hubResults.value = Array.isArray(body?.entries) ? body.entries : [];
     } catch (e) {
       hubError.value = e?.message || "搜索失败";
@@ -63,7 +63,7 @@ export function useSkillHub(client) {
     installingSlug.value = slug;
     hubError.value = "";
     try {
-      await client.installSkill(slug, { force });
+      await skills.install(slug, { force });
       if (typeof onInstalled === "function") {
         await onInstalled();
       }

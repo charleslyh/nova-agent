@@ -1,7 +1,7 @@
 //! External SkillHub marketplace client: **search** and **download** skill packages to disk.
 //!
 //! Registering or removing skills in the application catalog is not done here — use
-//! `SkillCenter::register_from_dir` / `Sonda::uninstall_skill` in `moray-sonda` after download.
+//! [`crate::SkillsManager::install`] / [`uninstall`](crate::SkillsManager::uninstall).
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -9,7 +9,11 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
+
+use crate::error::SkillHubError;
+
+/// Narrow [`Result`] for SkillHub HTTP/search/download helpers.
+pub type Result<T> = std::result::Result<T, SkillHubError>;
 
 const DEFAULT_SEARCH_URL: &str = "https://api.skillhub.cn/api/v1/search";
 const DEFAULT_PRIMARY_DOWNLOAD_URL_TEMPLATE: &str =
@@ -22,57 +26,6 @@ const DEFAULT_INDEX_URL: &str =
 const DEFAULT_SEARCH_LIMIT: u32 = 20;
 const DEFAULT_SEARCH_TIMEOUT_SECS: u64 = 6;
 const DEFAULT_DOWNLOAD_TIMEOUT_SECS: u64 = 60;
-
-#[derive(Debug, Error)]
-pub enum SkillHubError {
-    #[error("invalid slug: {0}")]
-    InvalidSlug(String),
-
-    #[error("skill slug must not be empty")]
-    EmptySlug,
-
-    #[error("skill '{slug}' is already downloaded at {path} (use force to overwrite)")]
-    AlreadyDownloaded { slug: String, path: PathBuf },
-
-    #[error("no download URL candidates for skill '{0}'")]
-    NoDownloadUrls(String),
-
-    #[error("all download attempts failed for skill '{slug}': {detail}")]
-    DownloadFailed { slug: String, detail: String },
-
-    #[error("SHA256 mismatch for '{slug}': expected {expected}, got {actual}")]
-    Sha256Mismatch {
-        slug: String,
-        expected: String,
-        actual: String,
-    },
-
-    #[error("search URL is empty")]
-    EmptySearchUrl,
-
-    #[error("skills index URL is empty")]
-    EmptyIndexUrl,
-
-    #[error("HTTP {status} from {url}")]
-    Http { status: u16, url: String },
-
-    #[error("failed to parse JSON: {0}")]
-    Json(String),
-
-    #[error("response is not valid UTF-8")]
-    Utf8,
-
-    #[error("downloaded content is not a valid zip archive")]
-    InvalidZip,
-
-    #[error("unsafe zip entry: {0}")]
-    UnsafeZipEntry(String),
-
-    #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
-}
-
-pub type Result<T> = std::result::Result<T, SkillHubError>;
 
 /// SkillHub client: search and download into a local directory.
 #[derive(Debug, Clone)]
@@ -101,18 +54,15 @@ impl SkillHub {
         }
     }
 
-    pub fn download_dir(&self) -> &Path {
-        &self.download_dir
-    }
-
     pub async fn search(&self, query: &str) -> Result<SearchResult> {
         search(self, query).await
     }
 
-    pub async fn download(&self, slug: &str, force: bool) -> Result<DownloadResult> {
+    pub(crate) async fn download(&self, slug: &str, force: bool) -> Result<DownloadResult> {
         download(self, slug, force).await
     }
 
+    /// Validates an install slug before Hub download.
     pub fn validate_slug(slug: &str) -> Result<()> {
         validate_slug(slug)
     }
@@ -162,11 +112,8 @@ pub struct SearchResult {
 }
 
 #[derive(Debug, Clone)]
-pub struct DownloadResult {
+pub(crate) struct DownloadResult {
     pub downloaded_dir: PathBuf,
-    pub files_written: usize,
-    pub slug: String,
-    pub version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -261,7 +208,7 @@ async fn download(hub: &SkillHub, slug: &str, force: bool) -> Result<DownloadRes
         });
     }
 
-    std::fs::create_dir_all(hub.download_dir())?;
+    std::fs::create_dir_all(&hub.download_dir)?;
 
     let mut download_urls = Vec::new();
 
@@ -341,14 +288,10 @@ async fn download(hub: &SkillHub, slug: &str, force: bool) -> Result<DownloadRes
         std::fs::remove_dir_all(&target_dir)?;
     }
 
-    let files_written = extract_zip_to_dir(&bytes, &target_dir)?;
-    let version = read_meta_version(&target_dir).unwrap_or_default();
+    extract_zip_to_dir(&bytes, &target_dir)?;
 
     Ok(DownloadResult {
         downloaded_dir: target_dir,
-        files_written,
-        slug: slug.to_string(),
-        version,
     })
 }
 
@@ -456,19 +399,6 @@ async fn lookup_expected_sha(hub: &SkillHub, slug: &str) -> Option<String> {
         .find(|e| e.slug == slug)
         .and_then(|e| e.sha256.clone())
         .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty())
-}
-
-fn read_meta_version(skill_dir: &Path) -> Option<String> {
-    let meta_path = skill_dir.join("_meta.json");
-    if !meta_path.exists() {
-        return None;
-    }
-    let raw = std::fs::read_to_string(&meta_path).ok()?;
-    let meta: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    meta.get("version")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
 }
 
@@ -587,12 +517,6 @@ mod tests {
     fn validate_slug_rejects_traversal() {
         assert!(validate_slug("../etc").is_err());
         assert!(validate_slug("foo/bar").is_err());
-    }
-
-    #[test]
-    fn new_sets_download_dir() {
-        let hub = SkillHub::new("./skills");
-        assert_eq!(hub.download_dir(), Path::new("./skills"));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Agent skills: load from disk and render into system prompt sections.
 //!
-//! For the external SkillHub marketplace (search/download), see the `moray-skillhub` crate.
+//! For local catalog, SkillHub client, and install/uninstall orchestration, see `moray-skills`
+//! (`LocalSkills`, `SkillHub`, `SkillsManager`).
 
 mod prompt;
 mod section;

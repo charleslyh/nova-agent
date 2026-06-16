@@ -2,26 +2,16 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use thiserror::Error;
-
+use crate::error::SkillsLoadError;
 use crate::Skill;
 
-#[derive(Debug, Error)]
-pub enum SkillsLoadError {
-    #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("parse error in {path}: {message}")]
-    Parse { path: PathBuf, message: String },
-
-    #[error("skill directory has no SKILL.md or SKILL.toml: {0}")]
-    NoManifest(PathBuf),
-}
+/// Narrow [`Result`] for disk load helpers.
+pub type Result<T> = std::result::Result<T, SkillsLoadError>;
 
 /// Load all skills from immediate child directories of `skills_dir`.
-pub fn load_skills_from_dir(skills_dir: &Path) -> Result<Vec<Skill>, SkillsLoadError> {
+pub fn load_skills_from_dir(skills_dir: &Path) -> Result<Vec<Skill>> {
     if !skills_dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -47,7 +37,7 @@ pub fn load_skills_from_dir(skills_dir: &Path) -> Result<Vec<Skill>, SkillsLoadE
 }
 
 /// Load a single skill from an immediate child directory (`SKILL.md` or `SKILL.toml`).
-pub fn load_skill_from_dir(dir: &Path) -> Result<Skill, SkillsLoadError> {
+pub fn load_skill_from_dir(dir: &Path) -> Result<Skill> {
     let md = dir.join("SKILL.md");
     let toml = dir.join("SKILL.toml");
     if md.is_file() {
@@ -60,7 +50,7 @@ pub fn load_skill_from_dir(dir: &Path) -> Result<Skill, SkillsLoadError> {
 }
 
 /// Load a skill from `SKILL.md` (YAML front matter + markdown body).
-pub fn load_skill_md(path: &Path, dir: &Path) -> Result<Skill, SkillsLoadError> {
+pub fn load_skill_md(path: &Path, dir: &Path) -> Result<Skill> {
     let content = fs::read_to_string(path)?;
     let (fm, body) = parse_front_matter(&content);
 
@@ -98,7 +88,7 @@ pub fn load_skill_md(path: &Path, dir: &Path) -> Result<Skill, SkillsLoadError> 
 }
 
 /// Load a skill from `SKILL.toml`.
-pub fn load_skill_toml(path: &Path) -> Result<Skill, SkillsLoadError> {
+pub fn load_skill_toml(path: &Path) -> Result<Skill> {
     let content = fs::read_to_string(path)?;
     let manifest: SkillManifestFile = toml::from_str(&content).map_err(|e| SkillsLoadError::Parse {
         path: path.to_path_buf(),

@@ -5,10 +5,11 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use moray_skillhub::{SkillHub, SkillHubError};
-use moray_sonda::{
-    InstallSkillError, SkillCatalogEntry, Sonda, UninstallSkillError, UnregisterSkillError,
+use moray_skills::{
+    InstallSkillError, SkillCatalogEntry, SkillHub, SkillHubError, UninstallSkillError,
+    UnregisterSkillError,
 };
+use moray_sonda::Sonda;
 use serde::{Deserialize, Serialize};
 
 use crate::error::response_with;
@@ -30,7 +31,7 @@ struct GetSkillsRes {
 /// Server-registered agent skills (bundled + user-installed).
 async fn skills_list(State(sonda): State<Arc<Sonda>>) -> impl IntoResponse {
     Json(GetSkillsRes {
-        skills: sonda.skill_center.catalog(),
+        skills: sonda.skills.local().catalog(),
     })
     .into_response()
 }
@@ -39,7 +40,7 @@ async fn skills_get(
     State(sonda): State<Arc<Sonda>>,
     Path(skill_id): Path<String>,
 ) -> impl IntoResponse {
-    match sonda.skill_center.detail(skill_id.as_str()) {
+    match sonda.skills.local().detail(skill_id.as_str()) {
         Some(detail) => Json(detail).into_response(),
         None => response_with(StatusCode::NOT_FOUND, "unknown skill").into_response(),
     }
@@ -71,7 +72,7 @@ async fn skills_search(
 ) -> impl IntoResponse {
     let q = params.q.as_deref().unwrap_or("").trim().to_string();
 
-    match sonda.skill_hub.search(&q).await {
+    match sonda.skills.hub().search(&q).await {
         Ok(result) => Json(SkillsSearchRes {
             entries: result
                 .entries
@@ -114,7 +115,7 @@ async fn skills_install(
         return response_with(StatusCode::BAD_REQUEST, &err.to_string()).into_response();
     }
 
-    match sonda.install_skill(slug, body.force).await {
+    match sonda.skills.install(slug, body.force).await {
         Ok(()) => Json(serde_json::json!({ "status": "ok" })).into_response(),
         Err(InstallSkillError::Hub(SkillHubError::AlreadyDownloaded { slug, path })) => {
             response_with(
@@ -138,7 +139,7 @@ async fn skills_uninstall(
     State(sonda): State<Arc<Sonda>>,
     Path(skill_id): Path<String>,
 ) -> impl IntoResponse {
-    match sonda.uninstall_skill(skill_id.as_str()) {
+    match sonda.skills.uninstall(skill_id.as_str()) {
         Ok(result) => Json(serde_json::json!({ "status": "ok", "slug": result.slug })).into_response(),
         Err(UninstallSkillError::Unregister(UnregisterSkillError::InvalidId)) => {
             response_with(StatusCode::BAD_REQUEST, "invalid skill id").into_response()
@@ -149,7 +150,10 @@ async fn skills_uninstall(
         Err(UninstallSkillError::Unregister(UnregisterSkillError::NotRemovable)) => {
             response_with(StatusCode::FORBIDDEN, "skill is not removable").into_response()
         }
-        Err(UninstallSkillError::Unregister(UnregisterSkillError::Catalog(err))) => {
+        Err(UninstallSkillError::Unregister(UnregisterSkillError::Catalog(msg))) => {
+            response_with(StatusCode::INTERNAL_SERVER_ERROR, &msg).into_response()
+        }
+        Err(UninstallSkillError::Unregister(UnregisterSkillError::Load(err))) => {
             response_with(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()).into_response()
         }
         Err(UninstallSkillError::RemoveFiles(msg)) => {

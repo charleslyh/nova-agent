@@ -2,22 +2,20 @@
 
 use std::path::PathBuf;
 
-#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// A loaded agent skill (metadata + optional inlined instructions).
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Skill {
     pub name: String,
     pub description: String,
     pub version: String,
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub prompts: Vec<String>,
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[serde(skip)]
     pub location: Option<PathBuf>,
     /// When true, include full instructions even in compact prompt mode.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub always: bool,
 }
 

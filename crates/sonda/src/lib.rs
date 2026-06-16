@@ -10,7 +10,6 @@ mod session_catalog;
 mod session_workspace;
 mod session_factory;
 mod settings_store;
-mod skill_center;
 mod snapshot;
 mod sonda;
 mod tool_catalog;
@@ -39,15 +38,13 @@ pub use settings_store::{
     SondaSettingsAgentEntry, SondaSettingsCompletionEntry, SondaSettingsFile, SondaSettingsStore,
     SondaSettingsStoreError,
 };
-pub use skill_center::{
-    Skill, SkillCatalogEntry, SkillCenter, SkillDetailEntry, SkillDirKind, SkillDirSource,
-    SkillFilterKind, UnregisterSkillError,
+pub use moray_skills::{
+    InstallSkillError, Skill, SkillCatalogEntry, SkillDetailEntry, SkillHub,
+    SkillHubError, SkillsError, SkillsManager, UninstallSkillError, UninstallSkillResult,
+    UnregisterSkillError,
 };
 pub use snapshot::{SondaSnapshot, SondaStateEvent};
-pub use sonda::{
-    CreateChannelResult, InstallSkillError, Sonda, SondaBuilder, UninstallSkillError,
-    UninstallSkillResult,
-};
+pub use sonda::{CreateChannelResult, Sonda, SondaBuilder};
 pub use tool_catalog::{SondaToolCatalog, SondaToolCatalogError};
 pub use transcripts::{
     replay_records, SondaSessionEventRecord, SondaSessionTranscripts, SondaSessionTranscriptsError,

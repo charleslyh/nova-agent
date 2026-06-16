@@ -283,7 +283,7 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import { renderSkillMarkdown } from "@/lib/markdown.js";
 import AgentEditDialog from "@/components/settings/AgentEditDialog.vue";
-import { useSkillHub } from "@/composables/useSkillHub.js";
+import { useSkills } from "@/composables/useSkills.js";
 
 const navEntries = [
   { id: "agents", label: "Agents" },
@@ -352,10 +352,16 @@ const {
   installFromHub,
   resetHub,
   isInstalledSlug
-} = useSkillHub({
-  searchSkillHub: (q) => props.searchSkillHub(q),
-  installSkill: (slug, opts) => props.installSkill(slug, opts),
-  listSkills: () => Promise.resolve(props.settingsCatalog.skills ?? [])
+} = useSkills({
+  local: {
+    list: () => Promise.resolve(props.settingsCatalog.skills ?? []),
+    detail: (id) => props.getSkillDetail(id)
+  },
+  hub: {
+    search: (q) => props.searchSkillHub(q)
+  },
+  install: (slug, opts) => props.installSkill(slug, opts),
+  uninstall: (id) => props.uninstallSkill(id)
 });
 
 const emit = defineEmits(["close"]);

@@ -13,12 +13,10 @@ use moray_channels::{
     ChannelDataRedactFn, ChannelEntry, ChannelError, ChannelFactoryFn,
 };
 use moray_core::TypedTool;
-use moray_skillhub::SkillHub;
 use moray_sonda::{
-    SessionCatalogError, SkillCenter, SkillDirKind, SkillDirSource, SkillFilterKind, Sonda,
-    SondaBuilder, SondaError, SondaSessionCatalog, SondaSessionTranscripts, SondaSessionWorkspace,
-    SondaSettingsStore, SondaSettingsStoreError, SondaToolCatalog, SondaToolCatalogError,
-    SondaToolRegistration,
+    SessionCatalogError, SkillsManager, Sonda, SondaBuilder, SondaError,
+    SondaSessionCatalog, SondaSessionTranscripts, SondaSessionWorkspace, SondaSettingsStore,
+    SondaSettingsStoreError, SondaToolCatalog, SondaToolCatalogError, SondaToolRegistration,
 };
 
 use super::wiring;
@@ -62,6 +60,12 @@ impl From<ChannelCatalogError> for SondaBootstrapError {
     }
 }
 
+impl From<moray_skills::SkillsError> for SondaBootstrapError {
+    fn from(err: moray_skills::SkillsError) -> Self {
+        Self::Sonda(err.into())
+    }
+}
+
 fn cli_subprocess_envs(
     cli_path: impl AsRef<Path>,
     tools_catalog_path: impl AsRef<Path>,
@@ -78,19 +82,16 @@ fn cli_subprocess_envs(
     ]
 }
 
-fn create_skill_center(paths: &SondaRuntimePaths) -> Result<SkillCenter, SondaBootstrapError> {
+fn create_skills_manager(paths: &SondaRuntimePaths) -> Result<SkillsManager, SondaBootstrapError> {
     let dir_list = [
         paths.skills_dir_user.display().to_string(),
         paths.skills_dir_bundled.display().to_string(),
     ];
     info!(dirs = ?dir_list, "load skills begin");
 
-    let center = SkillCenter::load([
-        SkillDirSource::new(&paths.skills_dir_user, SkillDirKind::User),
-        SkillDirSource::new(&paths.skills_dir_bundled, SkillDirKind::Bundled),
-    ])?;
+    let skills = SkillsManager::load(&paths.skills_dir_user, &paths.skills_dir_bundled)?;
 
-    let loaded = center.skills(SkillFilterKind::All);
+    let loaded = skills.local().all();
     let summary = loaded
         .iter()
         .map(|s| format!("{}({})", s.name, s.version))
@@ -102,11 +103,11 @@ fn create_skill_center(paths: &SondaRuntimePaths) -> Result<SkillCenter, SondaBo
             dirs = ?dir_list,
             "load skills failed, no skills found; expected <dir>/<name>/SKILL.md child folders"
         );
-    } else  {
+    } else {
         info!("load skills success, count={}, [{summary}]", loaded.len());
     }
 
-    Ok(center)
+    Ok(skills)
 }
 
 fn tool_registrations(
@@ -180,8 +181,7 @@ pub fn build_sonda(
         &paths.settings_path_user,
     )?);
     let session_catalog = Arc::new(SondaSessionCatalog::open(&paths.sessions_catalog_path)?);
-    let skill_center = create_skill_center(paths)?;
-    let skill_hub = SkillHub::new(&paths.skills_dir_user);
+    let skills = create_skills_manager(paths)?;
     let channel_catalog = Arc::new(ChannelCatalog::open(
         &paths.channels_catalog_path,
         create_channel_catalog_ops(),
@@ -195,10 +195,9 @@ pub fn build_sonda(
         .authorizer(wiring::authorizer())
         .context_builder(wiring::context_builder(
             settings_store,
-            skill_center.clone(),
+            skills.clone(),
         ))
-        .skill_center(skill_center)
-        .skill_hub(skill_hub)
+        .skills(skills)
         .session_catalog(session_catalog)
         .session_transcripts(session_transcripts)
         .channel_catalog(channel_catalog)

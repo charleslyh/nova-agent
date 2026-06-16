@@ -6,7 +6,6 @@ members = [
     "crates/skills",
     "crates/extensions",
     "crates/channels",
-    "crates/skillhub",
     "crates/sonda",
     "desktop/cli",
     "desktop/client/src-tauri",
@@ -23,7 +22,6 @@ moray-session = { path = "crates/session" }
 moray-skills = { path = "crates/skills" }
 moray-extensions = { path = "crates/extensions" }
 moray-channels = { path = "crates/channels" }
-moray-skillhub = { path = "crates/skillhub" }
 moray-sonda = { path = "crates/sonda" }
 moray-desktop-server = { path = "desktop/server" }
 moray-cli = { path = "desktop/cli" }

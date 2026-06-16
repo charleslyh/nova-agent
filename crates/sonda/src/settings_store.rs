@@ -500,8 +500,7 @@ mod tests {
     use moray_channels::ChannelCatalog;
     use crate::session_catalog::SondaSessionCatalog;
     use crate::sonda::SondaBuilder;
-    use moray_skillhub::SkillHub;
-    use crate::skill_center::{SkillCenter, SkillDirKind, SkillDirSource};
+    use moray_skills::SkillsManager;
     use crate::toolbox_factory::{SondaToolRegistration, SondaToolboxFactory};
     use crate::SondaToolCatalog;
 
@@ -632,12 +631,9 @@ mod tests {
         let session_transcripts = Arc::new(SondaSessionTranscripts::new(sessions_dir.clone()));
         let skills_dir = data_dir.join("skills");
         std::fs::create_dir_all(&skills_dir).expect("test skills dir");
-        let skill_center = SkillCenter::load([SkillDirSource::new(
-            skills_dir.clone(),
-            SkillDirKind::User,
-        )])
-        .expect("test skills center");
-        let skill_hub = SkillHub::new(skills_dir);
+        let bundled_skills = skills_dir.join("_bundled");
+        std::fs::create_dir_all(&bundled_skills).expect("test bundled skills dir");
+        let skills = SkillsManager::load(&skills_dir, &bundled_skills).expect("test skills manager");
         let channels_path = data_dir.join("channels.toml");
         let channel_catalog = Arc::new(ChannelCatalog::open(&channels_path, HashMap::new())?);
 
@@ -647,8 +643,7 @@ mod tests {
             .completion_registrations(testing_completion_registrations())
             .authorizer(Arc::new(AllowAllAuthorizer))
             .context_builder(testing_context_builder())
-            .skill_center(skill_center)
-            .skill_hub(skill_hub)
+            .skills(skills)
             .session_catalog(session_catalog)
             .session_transcripts(session_transcripts)
             .channel_catalog(channel_catalog)

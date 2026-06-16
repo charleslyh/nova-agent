@@ -12,11 +12,17 @@ export function createChatClient(impl) {
     replyToolAuth: impl.replyToolAuth,
     reset: impl.reset,
     getSettingsCatalog: impl.getSettingsCatalog,
-    listSkills: impl.listSkills,
-    getSkillDetail: impl.getSkillDetail,
-    searchSkillHub: impl.searchSkillHub,
-    installSkill: impl.installSkill,
-    uninstallSkill: impl.uninstallSkill,
+    skills: {
+      local: {
+        list: impl.skills.local.list,
+        detail: impl.skills.local.detail
+      },
+      hub: {
+        search: impl.skills.hub.search
+      },
+      install: impl.skills.install,
+      uninstall: impl.skills.uninstall
+    },
     getTools: impl.getTools,
     getSessionAgent: impl.getSessionAgent,
     setSessionAgent: impl.setSessionAgent,
@@ -117,34 +123,40 @@ export async function createHttpChatClient() {
       return request(`${baseUrl}/settings/catalog`, { method: "GET" });
     },
 
-    async listSkills() {
-      const body = await request(`${baseUrl}/skills`, { method: "GET" });
-      return Array.isArray(body?.skills) ? body.skills : [];
-    },
+    skills: {
+      local: {
+        async list() {
+          const body = await request(`${baseUrl}/skills`, { method: "GET" });
+          return Array.isArray(body?.skills) ? body.skills : [];
+        },
 
-    async getSkillDetail(skillId) {
-      const sid = encodeURIComponent(skillId);
-      return request(`${baseUrl}/skills/${sid}`, { method: "GET" });
-    },
+        async detail(skillId) {
+          const sid = encodeURIComponent(skillId);
+          return request(`${baseUrl}/skills/${sid}`, { method: "GET" });
+        }
+      },
 
-    async searchSkillHub(query) {
-      const trimmed = String(query ?? "").trim();
-      const url = trimmed
-        ? `${baseUrl}/skills/search?q=${encodeURIComponent(trimmed)}`
-        : `${baseUrl}/skills/search`;
-      return request(url, { method: "GET" });
-    },
+      hub: {
+        async search(query) {
+          const trimmed = String(query ?? "").trim();
+          const url = trimmed
+            ? `${baseUrl}/skills/search?q=${encodeURIComponent(trimmed)}`
+            : `${baseUrl}/skills/search`;
+          return request(url, { method: "GET" });
+        }
+      },
 
-    async installSkill(slug, { force = false } = {}) {
-      return request(`${baseUrl}/skills/install`, {
-        method: "POST",
-        body: JSON.stringify({ slug, force })
-      });
-    },
+      async install(slug, { force = false } = {}) {
+        return request(`${baseUrl}/skills/install`, {
+          method: "POST",
+          body: JSON.stringify({ slug, force })
+        });
+      },
 
-    async uninstallSkill(skillId) {
-      const sid = encodeURIComponent(skillId);
-      return request(`${baseUrl}/skills/${sid}`, { method: "DELETE" });
+      async uninstall(skillId) {
+        const sid = encodeURIComponent(skillId);
+        return request(`${baseUrl}/skills/${sid}`, { method: "DELETE" });
+      }
     },
 
     async getTools() {

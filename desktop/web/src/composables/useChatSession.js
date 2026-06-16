@@ -788,7 +788,7 @@ export function useChatSession() {
   }
 
   async function refreshSkillsList() {
-    const skills = await client.listSkills();
+    const skills = await client.skills.local.list();
     settingsCatalog.value = {
       ...settingsCatalog.value,
       skills
@@ -798,7 +798,7 @@ export function useChatSession() {
   async function refreshSettingsDialogState(sessionId) {
     const [catalog, skills] = await Promise.all([
       client.getSettingsCatalog(),
-      client.listSkills()
+      client.skills.local.list()
     ]);
     settingsCatalog.value = {
       agents: catalog.agents,
@@ -835,19 +835,19 @@ export function useChatSession() {
   }
 
   async function getSkillDetail(skillId) {
-    return client.getSkillDetail(skillId);
+    return client.skills.local.detail(skillId);
   }
 
   async function searchSkillHub(query) {
-    return client.searchSkillHub(query);
+    return client.skills.hub.search(query);
   }
 
   async function installSkill(slug, options) {
-    return client.installSkill(slug, options);
+    return client.skills.install(slug, options);
   }
 
   async function uninstallSkill(skillId) {
-    return client.uninstallSkill(skillId);
+    return client.skills.uninstall(skillId);
   }
 
   async function saveAgentFromSettings({ agentId, name, completionId, allowedTools, character, desc }) {

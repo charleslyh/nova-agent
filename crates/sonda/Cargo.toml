@@ -10,7 +10,6 @@ description = "Moray Sonda application kit: TOML config and multi-agent assembly
 async-trait = "0.1.88"
 futures = "0.3.31"
 moray-channels.workspace = true
-moray-skillhub.workspace = true
 moray-skills.workspace = true
 moray-core.workspace = true
 moray-session.workspace = true

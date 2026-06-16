@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::SondaToolCatalogError;
 use moray_core::MorayError;
+use moray_skills::SkillsError;
 use thiserror::Error;
 
 pub use moray_channels::ChannelCatalogError;
@@ -39,6 +40,9 @@ pub enum SondaError {
 
     #[error(transparent)]
     ToolCatalog(#[from] SondaToolCatalogError),
+
+    #[error(transparent)]
+    Skills(#[from] SkillsError),
 }
 
 impl From<crate::transcripts::SondaSessionTranscriptsError> for SondaError {

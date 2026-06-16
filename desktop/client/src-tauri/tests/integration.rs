@@ -245,7 +245,7 @@ fn bundled_skills_load_from_client_resources() {
 async fn build_sonda_loads_bundled_web_fetch_skill() {
     let _home = TestHomeGuard::new();
     let sonda = build_test_sonda().await;
-    let skills = sonda.skill_center.catalog();
+    let skills = sonda.skills.local().catalog();
     let web_fetch = skills
         .iter()
         .find(|s| s.id == "web-fetch")

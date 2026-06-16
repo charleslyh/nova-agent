@@ -34,7 +34,7 @@ The repository SHALL provide `moray-sonda` at `crates/sonda` depending on `moray
 
 `moray-sonda` SHALL provide `Sonda` and `SondaBuilder` with in-process live session registry (`submit`, `reset`), catalog admission, and `SessionTranscripts` integration from `moray-extensions`.
 
-`moray-sonda` SHALL provide `SkillCenter` (catalog / `detail` / `skills(SkillFilterKind)` / `register_from_dir` / `unregister`) mirroring the toolbox factory pattern; `SkillFilterKind` MUST support `All` and `Ids`. `register_from_dir` and `unregister` update the in-process catalog only (no filesystem delete). `Sonda::install_skill` and `Sonda::uninstall_skill` SHALL orchestrate `SkillHub` download or disk removal with catalog changes. Live sessions MUST inject registered skills into the system prompt via `SkillsSection` on `TemplatedPreambler`.
+`moray-skills` SHALL provide `LocalSkills` (catalog / `detail` / `all` / `by_ids`; register/unregister are crate-internal), `SkillsManager` (combines `LocalSkills` and `SkillHub` with `install` / `uninstall`), and unified `SkillsError`. `SkillsManager::install` and `uninstall` SHALL orchestrate `SkillHub` download or disk removal with catalog changes. Live sessions MUST inject registered skills into the system prompt via `SkillsSection` on `TemplatedPreambler`.
 
 `AgentRunner` instances used when activating a live session MUST be **supplied by the concrete application** (for example `SondaAgentRunner` in `moray-sonda` for desktop), not baked in as the only supported policy inside a lower crate. `SondaAgentRunner` MUST resolve per-session `ChatCompletion` and `Toolbox`, then assemble and start the agent run stream internally.
 

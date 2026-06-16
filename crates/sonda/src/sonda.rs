@@ -5,15 +5,15 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    SkillCenter, SondaAgentRunner, SondaCompletionFactory, SondaCompletionRegistration,
+    SondaAgentRunner, SondaCompletionFactory, SondaCompletionRegistration,
     ContextBuilder, SondaSessionCatalog, SondaSessionFactory,
     SondaSessionTranscripts, SondaSessionWorkspace, SondaSettingsStore, SondaSnapshot,
-    SondaToolCatalog, SondaToolRegistration, SondaToolboxFactory, UnregisterSkillError,
+    SondaToolCatalog, SondaToolRegistration, SondaToolboxFactory,
 };
 use crate::session_catalog::{
     normalize_sub_agents, SessionAgentsConfig, SessionSubAgentEntry,
 };
-use moray_skillhub::{SkillHub, SkillHubError};
+use moray_skills::SkillsManager;
 use serde::Serialize;
 use serde_json::Value;
 use moray_core::ToolCallAuthorizer;
@@ -24,27 +24,6 @@ use crate::error::{
     SondaError,
 };
 use moray_channels::{ChannelCatalog, ChannelEntry, ChannelFactoryFn, ChannelsManager};
-
-#[derive(Debug, thiserror::Error)]
-pub enum InstallSkillError {
-    #[error(transparent)]
-    Hub(#[from] SkillHubError),
-    #[error("downloaded but catalog registration failed: {0}")]
-    RegisterFailed(String),
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct UninstallSkillResult {
-    pub slug: String,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum UninstallSkillError {
-    #[error(transparent)]
-    Unregister(#[from] UnregisterSkillError),
-    #[error("failed to remove skill files: {0}")]
-    RemoveFiles(String),
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateChannelResult {
@@ -58,13 +37,12 @@ pub struct CreateChannelResult {
 /// and a persisted transcript (created via [`Sonda::create_session`] or equivalent) via [`SondaSessionTranscripts`].
 pub struct Sonda {
     pub settings_store: Arc<SondaSettingsStore>,
-    pub skill_center: SkillCenter,
+    pub skills: SkillsManager,
     pub session_catalog: Arc<SondaSessionCatalog>,
     pub session_transcripts: Arc<SondaSessionTranscripts>,
     pub session_workspace: Arc<SondaSessionWorkspace>,
     pub toolbox_factory: Arc<SondaToolboxFactory>,
     pub agent_runner: Arc<SondaAgentRunner>,
-    pub skill_hub: SkillHub,
     pub authorizer: Arc<dyn ToolCallAuthorizer>,
     pub snapshot: Arc<SondaSnapshot>,
     pub live_sessions: LiveSessions,
@@ -76,13 +54,12 @@ impl Sonda {
     #[allow(clippy::too_many_arguments)]
     fn new(
         settings_store: Arc<SondaSettingsStore>,
-        skill_center: SkillCenter,
+        skills: SkillsManager,
         session_catalog: Arc<SondaSessionCatalog>,
         session_transcripts: Arc<SondaSessionTranscripts>,
         session_workspace: Arc<SondaSessionWorkspace>,
         toolbox_factory: Arc<SondaToolboxFactory>,
         agent_runner: Arc<SondaAgentRunner>,
-        skill_hub: SkillHub,
         authorizer: Arc<dyn ToolCallAuthorizer>,
         snapshot: Arc<SondaSnapshot>,
         live_sessions: LiveSessions,
@@ -91,55 +68,18 @@ impl Sonda {
     ) -> Self {
         Self {
             settings_store,
-            skill_center,
+            skills,
             session_catalog,
             session_transcripts,
             session_workspace,
             toolbox_factory,
             agent_runner,
-            skill_hub,
             authorizer,
             snapshot,
             live_sessions,
             channel_catalog,
             channels,
         }
-    }
-
-    /// Download from SkillHub, register in [`SkillCenter`]. On registration failure, removes the downloaded directory.
-    pub async fn install_skill(
-        &self,
-        slug: &str,
-        force: bool,
-    ) -> std::result::Result<(), InstallSkillError> {
-        let download = self.skill_hub.download(slug, force).await?;
-        let downloaded_dir = download.downloaded_dir;
-        if let Err(e) = self.skill_center.register(&downloaded_dir) {
-            if downloaded_dir.exists() {
-                let _ = std::fs::remove_dir_all(&downloaded_dir);
-            }
-            return Err(InstallSkillError::RegisterFailed(e.to_string()));
-        }
-        Ok(())
-    }
-
-    /// Unregister from [`SkillCenter`] and remove the user skill directory from disk.
-    pub fn uninstall_skill(
-        &self,
-        skill_id: &str,
-    ) -> std::result::Result<UninstallSkillResult, UninstallSkillError> {
-        let unregistered = self.skill_center.unregister(skill_id)?;
-        if unregistered.user_dir.exists() {
-            std::fs::remove_dir_all(&unregistered.user_dir).map_err(|e| {
-                UninstallSkillError::RemoveFiles(format!(
-                    "{}: {e}",
-                    unregistered.user_dir.display()
-                ))
-            })?;
-        }
-        Ok(UninstallSkillResult {
-            slug: unregistered.slug,
-        })
     }
 
     pub fn update_agent(
@@ -358,8 +298,7 @@ pub struct SondaBuilder {
     completion_registrations: Option<Vec<SondaCompletionRegistration>>,
     authorizer: Option<Arc<dyn ToolCallAuthorizer>>,
     context_builder: Option<ContextBuilder>,
-    skill_center: Option<SkillCenter>,
-    skill_hub: Option<SkillHub>,
+    skills: Option<SkillsManager>,
     session_catalog: Option<Arc<SondaSessionCatalog>>,
     session_transcripts: Option<Arc<SondaSessionTranscripts>>,
     channel_catalog: Option<Arc<ChannelCatalog>>,
@@ -382,8 +321,7 @@ impl SondaBuilder {
             completion_registrations: None,
             authorizer: None,
             context_builder: None,
-            skill_center: None,
-            skill_hub: None,
+            skills: None,
             session_catalog: None,
             session_transcripts: None,
             channel_catalog: None,
@@ -417,13 +355,8 @@ impl SondaBuilder {
         self
     }
 
-    pub fn skill_center(mut self, skill_center: SkillCenter) -> Self {
-        self.skill_center = Some(skill_center);
-        self
-    }
-
-    pub fn skill_hub(mut self, skill_hub: SkillHub) -> Self {
-        self.skill_hub = Some(skill_hub);
+    pub fn skills(mut self, skills: SkillsManager) -> Self {
+        self.skills = Some(skills);
         self
     }
 
@@ -476,13 +409,9 @@ impl SondaBuilder {
             completion_registrations,
         )?);
 
-        let skill_center = self
-            .skill_center
-            .ok_or_else(|| error_missing_field("skill_center"))?;
-
-        let skill_hub = self
-            .skill_hub
-            .ok_or_else(|| error_missing_field("skill_hub"))?;
+        let skills = self
+            .skills
+            .ok_or_else(|| error_missing_field("skills"))?;
 
         let session_catalog = self
             .session_catalog
@@ -564,13 +493,12 @@ impl SondaBuilder {
 
         Ok(Sonda::new(
             settings_store,
-            skill_center,
+            skills,
             session_catalog,
             session_transcripts,
             session_workspace,
             toolbox_factory,
             agent_runner,
-            skill_hub,
             authorizer,
             snapshot,
             live_sessions,
