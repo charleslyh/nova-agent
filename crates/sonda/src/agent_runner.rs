@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use moray_core::{AgentRunner, MorayError, MultiAgentsRequestBuilder};
+use moray_core::{MorayError, MultiAgentsRequestBuilder};
+use moray_session::AgentRunner;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent_harness_factory::SondaAgentHarnessFactory;

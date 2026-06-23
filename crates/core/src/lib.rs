@@ -9,7 +9,7 @@ mod types;
 
 pub use agent::{
     AgentEventSink, AgentFinishKind, AgentHarnessFactory, AgentRequestBuilder,
-    AgentResponseEvent, AgentRole, AgentRunner, ChannelMultiAgentEventSink, MultiAgentEventSink,
+    AgentResponseEvent, AgentRole, ChannelMultiAgentEventSink, MultiAgentEventSink,
     MultiAgentResponseEvent, MultiAgentsRequestBuilder, SubAgentContextMode, SubAgentSpec,
     RUN_SUB_AGENT_TOOL_NAME,
 };
