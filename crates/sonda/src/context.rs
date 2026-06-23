@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use moray_core::{ChatCompletionRequestMessage, ContextEngine};
+use moray_core::{ChatCompletionRequestMessage, ContextEngine, MorayError};
 
 use crate::error::Result;
 
@@ -11,3 +11,21 @@ pub type ContextBuilder = Arc<
         + Send
         + Sync,
 >;
+
+pub(crate) struct SondaContextFactory {
+    inner: ContextBuilder,
+}
+
+impl SondaContextFactory {
+    pub(crate) fn new(inner: ContextBuilder) -> Self {
+        Self { inner }
+    }
+
+    pub(crate) fn create_context(
+        &self,
+        agent_id: &str,
+        messages: Vec<ChatCompletionRequestMessage>,
+    ) -> std::result::Result<Arc<dyn ContextEngine>, MorayError> {
+        (self.inner)(agent_id, messages).map_err(MorayError::from)
+    }
+}

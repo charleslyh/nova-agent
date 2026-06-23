@@ -607,9 +607,7 @@ impl Toolbox {
 
         let group = groups
             .get_mut(&group_id)
-            .ok_or_else(|| ToolboxError::UnknownGroup {
-                group_id,
-            })?;
+            .ok_or(ToolboxError::UnknownGroup { group_id })?;
 
         group.start_call(tool, self.auth.clone(), request);
 
@@ -679,7 +677,6 @@ mod tests {
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::sync::Mutex;
-    use std::time::Duration;
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::sync::CancellationToken;
 
@@ -807,11 +804,10 @@ mod tests {
         async fn run(
             &self,
             _: Value,
-            responder: &dyn ToolCallResponder,
+            _responder: &dyn ToolCallResponder,
         ) -> Result<(), MorayError> {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-            responder.send_text("slow".into()).await?;
-            Ok(())
+            std::future::pending::<()>().await;
+            unreachable!()
         }
     }
 

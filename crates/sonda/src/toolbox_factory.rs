@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use moray_core::{Tool, ToolCallAuthorizer, Toolbox, ToolboxBuilder};
+use moray_core::{MorayError, Tool, ToolCallAuthorizer, Toolbox, ToolboxBuilder};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{InvalidContent, Result};
@@ -157,5 +157,29 @@ impl SondaToolboxFactory {
             builder = builder.tool(tool);
         }
         Ok(builder.auth(self.authorizer.clone()).build())
+    }
+}
+
+/// Binds a shared [`SondaToolboxFactory`] to one live session workspace.
+pub(crate) struct SessionToolboxFactory {
+    session_id: String,
+    inner: Arc<SondaToolboxFactory>,
+}
+
+impl SessionToolboxFactory {
+    pub(crate) fn new(session_id: impl Into<String>, inner: Arc<SondaToolboxFactory>) -> Self {
+        Self {
+            session_id: session_id.into(),
+            inner,
+        }
+    }
+
+    pub(crate) fn create_toolbox(
+        &self,
+        agent_id: &str,
+    ) -> std::result::Result<Toolbox, MorayError> {
+        self.inner
+            .create_toolbox(self.session_id.as_str(), agent_id)
+            .map_err(MorayError::from)
     }
 }

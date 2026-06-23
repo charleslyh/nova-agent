@@ -367,7 +367,7 @@ export function useChatSession() {
   function handleSessionEvent(event) {
     const kind = event?.kind?.type;
     if (kind === "agent_response") {
-      const agentEv = event.kind.event;
+      const agentEv = event.kind.data;
       const agentId = event.kind.agent_id;
       const role = event.kind.role ?? "leader";
       const streamCtx = { agentId, agentRole: role };

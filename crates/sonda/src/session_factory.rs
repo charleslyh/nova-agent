@@ -7,7 +7,7 @@ use moray_session::{SessionFactory, SessionRuntime};
 
 use crate::{
     context::ContextBuilder,
-    replay_records, SondaAgentRunner, SondaSessionCatalog, SondaSessionError,
+    replay_records, SondaAgentRunnerFactory, SondaSessionCatalog, SondaSessionError,
     SondaSessionTranscripts,
 };
 
@@ -16,7 +16,7 @@ use crate::{
 pub struct SondaSessionFactory {
     session_catalog: Arc<SondaSessionCatalog>,
     session_transcripts: Arc<SondaSessionTranscripts>,
-    agent_runner: Arc<SondaAgentRunner>,
+    agent_runner_factory: Arc<SondaAgentRunnerFactory>,
     context_builder: ContextBuilder,
 }
 
@@ -24,13 +24,13 @@ impl SondaSessionFactory {
     pub fn new(
         session_catalog: Arc<SondaSessionCatalog>,
         session_transcripts: Arc<SondaSessionTranscripts>,
-        agent_runner: Arc<SondaAgentRunner>,
+        agent_runner_factory: Arc<SondaAgentRunnerFactory>,
         context_builder: ContextBuilder,
     ) -> Self {
         Self {
             session_catalog,
             session_transcripts,
-            agent_runner,
+            agent_runner_factory,
             context_builder,
         }
     }
@@ -72,7 +72,7 @@ impl SessionFactory for SondaSessionFactory {
             session_id,
             self.session_transcripts.clone(),
             context_engine,
-            self.agent_runner.clone(),
+            self.agent_runner_factory.create(session_id),
         )))
     }
 }

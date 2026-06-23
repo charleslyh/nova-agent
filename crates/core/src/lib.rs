@@ -1,4 +1,4 @@
-//! Agent core: ReAct loop via [`Agent::run`](crate::Agent::run) and [`AgentRequestBuilder`](crate::AgentRequestBuilder) over [`ChatCompletion`] and [`Toolbox`].
+//! Agent core: ReAct loop via [`AgentRequestBuilder`] over [`ChatCompletion`] and [`Toolbox`].
 #![forbid(unsafe_code)]
 
 mod agent;
@@ -7,7 +7,12 @@ mod context;
 mod toolbox;
 mod types;
 
-pub use agent::{AgentFinishKind, AgentRequestBuilder, AgentResponseEvent};
+pub use agent::{
+    AgentEventSink, AgentFinishKind, AgentHarnessFactory, AgentRequestBuilder,
+    AgentResponseEvent, AgentRole, AgentRunner, ChannelMultiAgentEventSink, MultiAgentEventSink,
+    MultiAgentResponseEvent, MultiAgentsRequestBuilder, SubAgentContextMode, SubAgentSpec,
+    RUN_SUB_AGENT_TOOL_NAME,
+};
 pub use completion::{
     ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,
     ChatCompletionResponseChunk,

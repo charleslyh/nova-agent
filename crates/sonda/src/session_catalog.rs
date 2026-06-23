@@ -9,7 +9,11 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use moray_core::SubAgentSpec;
+
 use super::error::{require_nonempty_trimmed, FileIoError, InvalidContent, MissingReference};
+
+pub type SessionSubAgentEntry = SubAgentSpec;
 
 type Result<T> = std::result::Result<T, SessionCatalogError>;
 
@@ -39,26 +43,6 @@ struct SessionsData {
 pub struct SondaSessionCatalog {
     pub file_path: PathBuf,
     data: RwLock<SessionsData>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum SubAgentContextMode {
-    Isolated,
-    Branch,
-}
-
-impl Default for SubAgentContextMode {
-    fn default() -> Self {
-        Self::Isolated
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub struct SessionSubAgentEntry {
-    pub agent_id: String,
-    #[serde(default)]
-    pub context_mode: SubAgentContextMode,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -311,9 +295,12 @@ pub(crate) fn normalize_sub_agents(
                 InvalidContent::new(format!("duplicate sub_agents agent_id `{agent_id}`")).into(),
             );
         }
+        let description =
+            require_nonempty_trimmed(&entry.description, "sub_agents.description")?;
         out.push(SessionSubAgentEntry {
             agent_id,
-            context_mode: entry.context_mode.clone(),
+            context_mode: entry.context_mode,
+            description,
         });
     }
     Ok(out)

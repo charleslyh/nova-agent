@@ -340,7 +340,8 @@ async function loadSessionAgents() {
     subAgents.value = Array.isArray(config?.sub_agents)
       ? config.sub_agents.map((e) => ({
           agent_id: e.agent_id,
-          context_mode: e.context_mode ?? "isolated"
+          context_mode: e.context_mode ?? "isolated",
+          description: e.description ?? ""
         }))
       : [];
   } catch (e) {
@@ -360,6 +361,13 @@ function isSubAgentSelected(agentId) {
   return subAgents.value.some((entry) => entry.agent_id === agentId);
 }
 
+function subAgentDescription(agentId) {
+  const agent = props.agents.find((item) => item.id === agentId);
+  const name = agent?.name?.trim();
+  if (name) return name;
+  return agentId;
+}
+
 function toggleSubAgent(agentId) {
   if (!agentId || agentId === leaderAgentId.value || agentsSaving.value) return;
 
@@ -367,7 +375,11 @@ function toggleSubAgent(agentId) {
   if (index >= 0) {
     subAgents.value.splice(index, 1);
   } else {
-    subAgents.value.push({ agent_id: agentId, context_mode: "isolated" });
+    subAgents.value.push({
+      agent_id: agentId,
+      context_mode: "isolated",
+      description: subAgentDescription(agentId)
+    });
   }
   void persistSessionAgents();
 }
@@ -407,7 +419,8 @@ function buildSubAgentsPayload() {
     .filter((entry) => entry.agent_id && entry.agent_id !== leaderAgentId.value)
     .map((entry) => ({
       agent_id: entry.agent_id,
-      context_mode: entry.context_mode
+      context_mode: entry.context_mode,
+      description: entry.description?.trim() || subAgentDescription(entry.agent_id)
     }));
 }
 

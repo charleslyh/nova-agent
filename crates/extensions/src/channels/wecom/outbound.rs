@@ -255,7 +255,7 @@ impl WeComSessionOutbound {
         match &event.kind {
             SessionEventKind::AgentResponse(chunk) => {
                 if matches!(chunk.role, AgentRole::Leader) {
-                    self.on_agent_event(&chunk.event).await;
+                    self.on_agent_event(&chunk.data).await;
                 }
             }
             SessionEventKind::TurnFinish => self.on_turn_finish().await,

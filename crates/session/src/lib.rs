@@ -1,16 +1,16 @@
 //! Session orchestration: runtime and agent runner wiring.
 
-mod runner;
 mod error;
 mod factory;
 mod live;
 mod runtime;
 
-pub use runner::AgentRunner;
+pub use moray_core::AgentRunner;
 pub use error::{Result, SessionError};
 pub use factory::SessionFactory;
 pub use live::LiveSessions;
+pub use moray_core::{AgentRole, MultiAgentResponseEvent};
 pub use runtime::{
-    AgentRole, SessionAgentResponse, SessionEvent, SessionEventKind, SessionEventSink,
+    SessionAgentResponse, SessionEvent, SessionEventKind, SessionEventSink,
     SessionRuntime, TurnInput, TurnResource,
 };

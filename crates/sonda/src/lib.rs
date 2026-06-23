@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 //! **Sonda** — TOML-backed multi-agent application framework for Moray desktop.
 
+mod agent_harness_factory;
 mod agent_runner;
 mod completion_factory;
 mod context;
@@ -19,7 +20,7 @@ pub use error::{
     BadEnvironmentVariable, FileIoError, InvalidArguments, InvalidContent, MissingReference,
     Result, SondaError, SondaSessionError,
 };
-pub use agent_runner::{SondaAgentRunner, RUN_SUB_AGENT_TOOL_NAME};
+pub use agent_runner::{SondaAgentRunner, SondaAgentRunnerFactory, RUN_SUB_AGENT_TOOL_NAME};
 pub use completion_factory::{SondaCompletionFactory, SondaCompletionRegistration};
 pub use context::ContextBuilder;
 pub use toolbox_factory::{
@@ -27,8 +28,9 @@ pub use toolbox_factory::{
 };
 pub use session_catalog::{
     SessionAgentsConfig, SessionCatalogEntry, SessionCatalogError, SessionSubAgentEntry,
-    SondaSessionCatalog, SubAgentContextMode,
+    SondaSessionCatalog,
 };
+pub use moray_core::SubAgentContextMode;
 pub use session_workspace::{
     ensure_session_dirs, SessionWorkspaceEntry, SessionWorkspacePath, SessionWorkspaceTree,
     SondaSessionWorkspace, SESSION_OUTPUT_DIR, SESSION_RESOURCES_DIR,

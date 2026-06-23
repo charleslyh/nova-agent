@@ -1,96 +1,38 @@
-use std::pin::Pin;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use futures::Stream;
 use futures::StreamExt;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use crate::agent::requests::single::AgentEventSink;
+use crate::agent::types::{AgentFinishKind, AgentResponseEvent};
 use crate::completion::{
     ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,
     ChatCompletionResponseChunk,
 };
 use crate::context::ContextEngine;
 use crate::toolbox::{ToolCallEvent, ToolCallEventSink, ToolCallGroupId, Toolbox};
-use crate::types::{MorayError, ToolManifest};
+use crate::types::ToolManifest;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
-pub enum AgentFinishKind {
-    Succeeded,
-    Canceled,
-    Refused {
-        #[cfg_attr(
-            feature = "serde",
-            serde(default, skip_serializing_if = "Option::is_none")
-        )]
-        reason: Option<String>,
-    },
-    Failed {
-        reason: String,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "serde", serde(tag = "type", rename_all = "snake_case"))]
-pub enum AgentResponseEvent {
-    Started,
-    CompletionResponse { chunk: ChatCompletionResponseChunk },
-    ToolCall { event: ToolCallEvent },
-    Finished { kind: AgentFinishKind },
-}
-
-pub fn agent_run(
+pub(crate) async fn run(
     context: Arc<dyn ContextEngine>,
     completion: Arc<dyn ChatCompletion>,
     toolbox: Arc<Toolbox>,
     stream: bool,
     cancellation: CancellationToken,
-) -> Result<Pin<Box<dyn Stream<Item = AgentResponseEvent> + Send>>, MorayError> {
-    let (tx, rx) = unbounded_channel::<AgentResponseEvent>();
-    info!("started");
-
-    tokio::spawn(
-        agent_run_impl(
-            context,
-            completion,
-            toolbox,
-            stream,
-            cancellation,
-            tx,
-        )
-    );
-
-    Ok(Box::pin(UnboundedReceiverStream::new(rx)))
-}
-
-async fn agent_run_impl(
-    context: Arc<dyn ContextEngine>,
-    completion: Arc<dyn ChatCompletion>,
-    toolbox: Arc<Toolbox>,
-    stream: bool,
-    cancellation: CancellationToken,
-    tx: UnboundedSender<AgentResponseEvent>,
-) {
+    sink: Arc<dyn AgentEventSink>,
+) -> std::result::Result<(), crate::types::MorayError> {
     let tools = toolbox.list_tools().await;
     if let Err(e) = context.setup(&tools).await {
         warn!(error = %e, "context setup failed");
-        emit_event(
-            &tx,
-            AgentResponseEvent::Finished {
-                kind: AgentFinishKind::Failed {
-                    reason: e.to_string(),
-                },
+        sink.emit(AgentResponseEvent::Finished {
+            kind: AgentFinishKind::Failed {
+                reason: e.to_string(),
             },
-        );
-        return;
+        })
+        .await;
+        return Ok(());
     }
     debug!("setup completed");
 
@@ -102,21 +44,16 @@ async fn agent_run_impl(
             stream,
             &toolbox,
             &cancellation,
-            &tx,
+            &sink,
         )
         .await
         {
             Ok(nb_tool_calls) => {
                 debug!("react loop step completed {{nb_tool_calls={nb_tool_calls}}}");
                 if nb_tool_calls == 0 {
-                    // No pending tool work is treated as a fixed point; continuing
-                    // the loop would only re-ask the model without new evidence.
                     break AgentFinishKind::Succeeded;
                 }
             }
-
-            // Surface failures through the same stream contract so callers do not
-            // need out-of-band error channels.
             Err(kind) => break kind,
         }
     };
@@ -127,111 +64,22 @@ async fn agent_run_impl(
         debug!("teardown completed");
     }
 
-    emit_event(&tx, AgentResponseEvent::Finished { kind: exit_kind });
+    sink.emit(AgentResponseEvent::Finished { kind: exit_kind }).await;
     info!("finished");
-}
-
-/// Builds arguments for [`Agent::run`] and forwards to it. [`Self::completion`] and
-/// [`Self::context`] are required; other fields use in-builder defaults (empty toolbox with no
-/// authorizer, streaming on, fresh cancellation token).
-pub struct AgentRequestBuilder {
-    completion: Option<Arc<dyn ChatCompletion>>,
-    context: Option<Arc<dyn ContextEngine>>,
-    toolbox: Option<Arc<Toolbox>>,
-    stream: bool,
-    cancellation: Option<CancellationToken>,
-}
-
-impl Default for AgentRequestBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl AgentRequestBuilder {
-    pub fn new() -> Self {
-        Self {
-            completion: None,
-            context: None,
-            toolbox: None,
-            cancellation: None,
-            stream: true,
-        }
-    }
-
-    pub fn completion(mut self, completion: Arc<dyn ChatCompletion>) -> Self {
-        self.completion = Some(completion);
-        self
-    }
-
-    pub fn context(mut self, context: Arc<dyn ContextEngine>) -> Self {
-        self.context = Some(context);
-        self
-    }
-
-    pub fn toolbox(mut self, toolbox: Arc<Toolbox>) -> Self {
-        self.toolbox = Some(toolbox);
-        self
-    }
-
-    pub fn stream(mut self, stream: bool) -> Self {
-        self.stream = stream;
-        self
-    }
-
-    pub fn cancellation(mut self, cancellation: CancellationToken) -> Self {
-        self.cancellation = Some(cancellation);
-        self
-    }
-
-    pub fn run(self) -> Result<Pin<Box<dyn Stream<Item = AgentResponseEvent> + Send>>, MorayError> {
-        let Some(completion) = self.completion else {
-            return Err(MorayError::Message(
-                "AgentRequestBuilder: missing required `completion`".into(),
-            ));
-        };
-        let Some(context) = self.context else {
-            return Err(MorayError::Message(
-                "AgentRequestBuilder: missing required `context`".into(),
-            ));
-        };
-
-        let toolbox = self.toolbox.unwrap_or_else(empty_toolbox);
-
-        let cancellation = self.cancellation.unwrap_or_default();
-
-        agent_run(
-            context,
-            completion,
-            toolbox,
-            self.stream,
-            cancellation,
-        )
-    }
-}
-
-fn empty_toolbox() -> Arc<Toolbox> {
-    Arc::new(Toolbox::new(
-        std::collections::HashMap::new(),
-        Vec::new(),
-        None,
-    ))
-}
-
-fn emit_event(tx: &UnboundedSender<AgentResponseEvent>, ev: AgentResponseEvent) {
-    let _ = tx.send(ev);
+    Ok(())
 }
 
 struct AgentToolCallEventSink {
-    tx: UnboundedSender<AgentResponseEvent>,
+    sink: Arc<dyn AgentEventSink>,
 }
 
 #[async_trait]
 impl ToolCallEventSink for AgentToolCallEventSink {
     async fn emit(&self, ev: ToolCallEvent) -> bool {
-        self.tx
-            .send(AgentResponseEvent::ToolCall { event: ev })
-            .is_ok()
+        self.sink
+            .emit(AgentResponseEvent::ToolCall { event: ev })
+            .await;
+        true
     }
 }
 
@@ -248,10 +96,10 @@ async fn react_once(
     stream: bool,
     toolbox: &Arc<Toolbox>,
     cancellation: &CancellationToken,
-    tx: &UnboundedSender<AgentResponseEvent>,
+    sink: &Arc<dyn AgentEventSink>,
 ) -> Result<usize, AgentFinishKind> {
     debug!(stream, tool_count = tools.len(), "started");
-    let messages = match context.assemble(&tools).await {
+    let messages = match context.assemble(tools).await {
         Ok(v) => v,
         Err(e) => {
             warn!(error = %e, "assemble context failed");
@@ -261,10 +109,9 @@ async fn react_once(
         }
     };
     debug!(message_count = messages.len(), "context assembled");
-    let mut chat_stream = match completion.completion(&messages, &tools, stream).await {
+    let mut chat_stream = match completion.completion(&messages, tools, stream).await {
         Ok(v) => Box::pin(v),
         Err(e) => {
-            // Fail fast to avoid a loop that appears alive but can no longer produce model output.
             warn!(error = %e, "completion request failed");
             return Err(AgentFinishKind::Failed {
                 reason: e.to_string(),
@@ -272,14 +119,13 @@ async fn react_once(
         }
     };
 
-    emit_event(tx, AgentResponseEvent::Started);
+    sink.as_ref().emit(AgentResponseEvent::Started).await;
 
     let mut acc_text = String::new();
     let mut tool_call_group: Option<ToolCallGroupId> = None;
     let mut loop_exit: Option<AgentFinishKind> = None;
 
     'completion: loop {
-        // Race cancellation with model chunks so shutdown latency is not coupled to provider chunk cadence or backpressure.
         let next = tokio::select! {
             _ = cancellation.cancelled() => {
                 loop_exit = Some(AgentFinishKind::Canceled);
@@ -289,7 +135,6 @@ async fn react_once(
         };
 
         let chunk = match next {
-            // Early EOF is treated as a safe boundary to avoid replaying partial intent as if it were complete.
             None => {
                 debug!("chat stream ended without Done chunk");
                 break 'completion;
@@ -304,12 +149,11 @@ async fn react_once(
             }
         };
 
-        emit_event(
-            tx,
-            AgentResponseEvent::CompletionResponse {
+        sink.as_ref()
+            .emit(AgentResponseEvent::CompletionResponse {
                 chunk: chunk.clone(),
-            },
-        );
+            })
+            .await;
 
         match chunk {
             ChatCompletionResponseChunk::TextBlock(t) => {
@@ -324,7 +168,9 @@ async fn react_once(
                 let group = if let Some(id) = tool_call_group {
                     id
                 } else {
-                    let sink = Arc::new(AgentToolCallEventSink { tx: tx.clone() });
+                    let sink = Arc::new(AgentToolCallEventSink {
+                        sink: sink.clone(),
+                    });
                     let id = toolbox.begin_group(sink, cancellation.clone()).await;
                     tool_call_group = Some(id);
                     id

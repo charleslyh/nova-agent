@@ -3,12 +3,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::spawn;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use super::runner::AgentRunner;
 use crate::{Result, SessionError};
-use moray_core::{AgentResponseEvent, ChatCompletionRequestMessage, ContextEngine, MorayError};
+use moray_core::{
+    AgentRunner, ChannelMultiAgentEventSink, ChatCompletionRequestMessage, ContextEngine,
+    MorayError, MultiAgentResponseEvent,
+};
 
 /// Per-turn signals: cancel token and [`oneshot`] completion.
 struct TurnControl {
@@ -128,11 +130,6 @@ pub struct TurnInput {
 
 impl TurnInput {
     /// Projects this turn into the core transcript user message.
-    ///
-    /// Session events keep structured [`TurnInput`] (text plus attachments) for UI and
-    /// replay, while [`ChatCompletionRequestMessage`] is core's flat transcript primitive.
-    /// The mapping lives here so moray-core stays unaware of session payloads, and so live
-    /// ingest and transcript replay (`sonda`) share one encoding path.
     pub fn to_user_message(&self) -> ChatCompletionRequestMessage {
         ChatCompletionRequestMessage::User {
             content: self.user_message_content(),
@@ -149,8 +146,6 @@ impl TurnInput {
         }
         for resource in &self.resources {
             match resource {
-                // Core's user message is still a single `content` string; mark attachments
-                // inline until we can thread provider-native multimodal parts through core.
                 TurnResource::Image { path } => parts.push(format!("[IMAGE:{path}]")),
             }
         }
@@ -180,21 +175,7 @@ pub trait SessionEventSink: Send + Sync {
     fn append(&self, event: &SessionEvent) -> std::result::Result<(), MorayError>;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
-pub enum AgentRole {
-    Leader,
-    Sub,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SessionAgentResponse {
-    pub agent_id: String,
-    pub role: AgentRole,
-    pub event: AgentResponseEvent,
-}
+pub type SessionAgentResponse = MultiAgentResponseEvent;
 
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -216,6 +197,8 @@ pub struct SessionEvent {
     pub ts: u64,
     pub kind: SessionEventKind,
 }
+
+const SESSION_EVENT_CHANNEL_CAPACITY: usize = 256;
 
 pub struct SessionRuntime {
     session_id: String,
@@ -259,16 +242,11 @@ impl SessionRuntime {
     pub async fn submit(&self, input: TurnInput) -> Result<()> {
         let cancellation = self.inflight.try_start_turn()?;
 
-        // Events record the structured turn for UI/audit; the LLM sees only the projected
-        // user message.
         let user_message = input.to_user_message();
 
         let event = event_of(self.session_id.as_str(), SessionEventKind::TurnAccepted { input });
         self.event_sink.append(&event)?;
 
-        // The agent loop assembles prompts from ContextEngine, not from TurnInput.
-        // Ingest extends that shared transcript (where preambles/compaction also hook in)
-        // without pulling session types into moray-core.
         self.context.ingest(vec![user_message]).await?;
 
         let session_id = self.session_id.clone();
@@ -278,9 +256,28 @@ impl SessionRuntime {
         let inflight = self.inflight.clone();
 
         spawn(async move {
-            let _ = runner
-                .run_turn(session_id.clone(), context, cancellation, sink.clone())
-                .await;
+            let (events_tx, mut events_rx) =
+                mpsc::channel::<MultiAgentResponseEvent>(SESSION_EVENT_CHANNEL_CAPACITY);
+            let multi_sink = Arc::new(ChannelMultiAgentEventSink::new(events_tx));
+
+            let consumer_session_id = session_id.clone();
+            let consumer_sink = sink.clone();
+            let consumer = spawn(async move {
+                while let Some(frame) = events_rx.recv().await {
+                    let event = SessionEvent {
+                        session_id: consumer_session_id.clone(),
+                        ts: timestamp_ms(),
+                        kind: SessionEventKind::AgentResponse(frame),
+                    };
+                    if consumer_sink.append(&event).is_err() {
+                        break;
+                    }
+                }
+            });
+
+            let run_result = runner.run(context, cancellation, multi_sink).await;
+            let _ = consumer.await;
+            let _ = run_result.map_err(SessionError::from);
 
             let finish = event_of(session_id.as_str(), SessionEventKind::TurnFinish);
             let _ = sink.append(&finish);

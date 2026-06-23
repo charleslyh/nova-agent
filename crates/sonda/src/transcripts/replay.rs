@@ -35,7 +35,7 @@ pub fn replay_records(records: &[SondaSessionEventRecord]) -> SondaSessionSnapsh
                     continue;
                 }
                 fold_agent_event(
-                    &chunk.event,
+                    &chunk.data,
                     &mut messages,
                     &mut pending_text,
                     &mut pending_tools,
@@ -195,7 +195,7 @@ mod tests {
             SessionEventKind::AgentResponse(SessionAgentResponse {
                 agent_id: agent_id.into(),
                 role,
-                event,
+                data: event,
             }),
         )
     }

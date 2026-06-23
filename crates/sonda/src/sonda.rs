@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
-    SondaAgentRunner, SondaCompletionFactory, SondaCompletionRegistration,
+    SondaAgentRunnerFactory, SondaCompletionFactory, SondaCompletionRegistration,
     ContextBuilder, SondaSessionCatalog, SondaSessionFactory,
     SondaSessionTranscripts, SondaSessionWorkspace, SondaSettingsStore, SondaSnapshot,
     SondaToolCatalog, SondaToolRegistration, SondaToolboxFactory,
@@ -42,7 +42,7 @@ pub struct Sonda {
     pub session_transcripts: Arc<SondaSessionTranscripts>,
     pub session_workspace: Arc<SondaSessionWorkspace>,
     pub toolbox_factory: Arc<SondaToolboxFactory>,
-    pub agent_runner: Arc<SondaAgentRunner>,
+    pub agent_runner_factory: Arc<SondaAgentRunnerFactory>,
     pub authorizer: Arc<dyn ToolCallAuthorizer>,
     pub snapshot: Arc<SondaSnapshot>,
     pub live_sessions: LiveSessions,
@@ -59,7 +59,7 @@ impl Sonda {
         session_transcripts: Arc<SondaSessionTranscripts>,
         session_workspace: Arc<SondaSessionWorkspace>,
         toolbox_factory: Arc<SondaToolboxFactory>,
-        agent_runner: Arc<SondaAgentRunner>,
+        agent_runner_factory: Arc<SondaAgentRunnerFactory>,
         authorizer: Arc<dyn ToolCallAuthorizer>,
         snapshot: Arc<SondaSnapshot>,
         live_sessions: LiveSessions,
@@ -73,7 +73,7 @@ impl Sonda {
             session_transcripts,
             session_workspace,
             toolbox_factory,
-            agent_runner,
+            agent_runner_factory,
             authorizer,
             snapshot,
             live_sessions,
@@ -375,7 +375,7 @@ impl SondaBuilder {
         self
     }
 
-    /// Inputs for [`SondaAgentRunner`] (workspace must be created by the host before [`Self::build`]).
+    /// Inputs for [`SondaAgentRunnerFactory`] (workspace must be created by the host before [`Self::build`]).
     pub fn harness_components(
         mut self,
         session_workspace: Arc<SondaSessionWorkspace>,
@@ -457,8 +457,7 @@ impl SondaBuilder {
             session_workspace.clone(),
         )?);
 
-        let agent_runner = Arc::new(SondaAgentRunner::new(
-            settings_store.clone(),
+        let agent_runner_factory = Arc::new(SondaAgentRunnerFactory::new(
             completion_factory,
             toolbox_factory.clone(),
             session_catalog.clone(),
@@ -478,7 +477,7 @@ impl SondaBuilder {
         let session_factory = Arc::new(SondaSessionFactory::new(
             session_catalog.clone(),
             session_transcripts.clone(),
-            agent_runner.clone(),
+            agent_runner_factory.clone(),
             context_builder,
         ));
 
@@ -498,7 +497,7 @@ impl SondaBuilder {
             session_transcripts,
             session_workspace,
             toolbox_factory,
-            agent_runner,
+            agent_runner_factory,
             authorizer,
             snapshot,
             live_sessions,

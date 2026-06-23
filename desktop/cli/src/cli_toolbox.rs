@@ -142,7 +142,7 @@ parameters = '{}'
             _: serde_json::Value,
             responder: &dyn ToolCallResponder,
         ) -> Result<(), moray_core::MorayError> {
-            responder.send_text("beta".into()).await;
+            let _ = responder.send_text("beta".into()).await;
             Ok(())
         }
     }
@@ -157,7 +157,7 @@ parameters = '{}'
             _: serde_json::Value,
             responder: &dyn ToolCallResponder,
         ) -> Result<(), moray_core::MorayError> {
-            responder.send_text("alpha".into()).await;
+            let _ = responder.send_text("alpha".into()).await;
             Ok(())
         }
     }
@@ -172,7 +172,7 @@ parameters = '{}'
             _: serde_json::Value,
             responder: &dyn ToolCallResponder,
         ) -> Result<(), moray_core::MorayError> {
-            responder.send_text("gamma".into()).await;
+            let _ = responder.send_text("gamma".into()).await;
             Ok(())
         }
     }
@@ -222,7 +222,7 @@ parameters = '{}'
                 _: serde_json::Value,
                 responder: &dyn ToolCallResponder,
             ) -> Result<(), moray_core::MorayError> {
-                responder.send_text("ok".into()).await;
+                let _ = responder.send_text("ok".into()).await;
                 Ok(())
             }
         }
