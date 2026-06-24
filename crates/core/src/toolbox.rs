@@ -176,12 +176,20 @@ where
 
     async fn call(&self, args: Value, responder: &dyn ToolCallResponder) -> Result<(), MorayError> {
         let tool_name = T::NAME;
+        tracing::info!(
+            "[tool] {} args={}",
+            tool_name,
+            serde_json::to_string(&args).unwrap_or_default()
+        );
         let args = serde_json::from_value(args).map_err(|e| {
             MorayError::Message(format!("{tool_name}: invalid JSON arguments: {e}"))
         })?;
-        self.run(args, responder)
+        let result = self
+            .run(args, responder)
             .await
-            .map_err(|e| MorayError::Message(format!("{tool_name}: {e}")))
+            .map_err(|e| MorayError::Message(format!("{tool_name}: {e}")));
+        tracing::info!("[tool] {} result={:?}", tool_name, result);
+        result
     }
 }
 
