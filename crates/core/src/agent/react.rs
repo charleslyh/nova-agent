@@ -202,7 +202,7 @@ async fn react_once(
         }
     }
 
-    if let Some(group) = tool_call_group.take() {
+    let (nb_tool_calls, ingest_messages) = if let Some(group) = tool_call_group.take() {
         let end_result = toolbox.end_group(group).await;
         if let Some(kind) = loop_exit {
             let _ = end_result;
@@ -228,21 +228,29 @@ async fn react_once(
             });
         }
 
-        if let Err(e) = context.ingest(ingest_messages).await {
-            warn!(error = %e, "failed to ingest react_once output");
-            return Err(AgentFinishKind::Failed {
-                reason: e.to_string(),
-            });
+        (nb_tool_calls, ingest_messages)
+    } else {
+        if let Some(kind) = loop_exit {
+            return Err(kind);
         }
 
+        (0, vec![ChatCompletionRequestMessage::Assistant {
+            content: acc_text,
+            tool_calls: None,
+        }])
+    };
+
+    if let Err(e) = context.ingest(ingest_messages).await {
+        warn!(error = %e, "failed to ingest react_once output");
+        return Err(AgentFinishKind::Failed {
+            reason: e.to_string(),
+        });
+    }
+
+    if nb_tool_calls > 0 {
         info!(nb_tool_calls, "react_once completed");
-        return Ok(nb_tool_calls);
+    } else {
+        debug!("finished without tool calls");
     }
-
-    if let Some(kind) = loop_exit {
-        return Err(kind);
-    }
-
-    debug!("finished without tool calls");
-    Ok(0)
+    Ok(nb_tool_calls)
 }
