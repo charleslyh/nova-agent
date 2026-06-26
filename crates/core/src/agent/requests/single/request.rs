@@ -4,12 +4,14 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, Instrument};
 
-use crate::agent::react::{self, DEFAULT_MAX_ROUNDS};
+use crate::agent::react;
 use crate::agent::requests::single::AgentEventSink;
 use crate::completion::ChatCompletion;
 use crate::context::ContextEngine;
 use crate::toolbox::Toolbox;
 use crate::types::MorayError;
+
+const DEFAULT_MAX_ROUNDS: usize = 10;
 
 /// Builds and spawns a single-agent ReAct run. [`Self::completion`] and [`Self::context`] are required.
 pub struct AgentRequestBuilder {

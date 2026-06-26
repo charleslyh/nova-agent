@@ -15,9 +15,6 @@ use crate::context::ContextEngine;
 use crate::toolbox::{ToolCallEvent, ToolCallEventSink, ToolCallGroupId, Toolbox};
 use crate::types::ToolManifest;
 
-/// Default cap on ReAct completion+tool rounds per agent run.
-pub(crate) const DEFAULT_MAX_ROUNDS: usize = 10;
-
 pub(crate) async fn run(
     context: Arc<dyn ContextEngine>,
     completion: Arc<dyn ChatCompletion>,

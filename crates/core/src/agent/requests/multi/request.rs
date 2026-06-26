@@ -17,6 +17,7 @@ pub struct MultiAgentsRequestBuilder {
     context: Option<Arc<dyn ContextEngine>>,
     sub_agents: Vec<SubAgentSpec>,
     stream: bool,
+    leader_max_rounds: Option<usize>,
     cancellation: Option<CancellationToken>,
 }
 
@@ -34,6 +35,7 @@ impl MultiAgentsRequestBuilder {
             context: None,
             sub_agents: Vec::new(),
             stream: true,
+            leader_max_rounds: None,
             cancellation: None,
         }
     }
@@ -60,6 +62,11 @@ impl MultiAgentsRequestBuilder {
 
     pub fn stream(mut self, stream: bool) -> Self {
         self.stream = stream;
+        self
+    }
+
+    pub fn leader_max_rounds(mut self, max_rounds: usize) -> Self {
+        self.leader_max_rounds = Some(max_rounds);
         self
     }
 
@@ -108,13 +115,16 @@ impl MultiAgentsRequestBuilder {
 
         let completion = factory.create_completion(leader_agent_id.as_str())?;
 
-        AgentRequestBuilder::new()
+        let mut request = AgentRequestBuilder::new()
             .completion(completion)
             .toolbox(toolbox)
             .context(context)
-            .stream(self.stream)
-            .cancellation(cancellation)
-            .run(leader_sink)
+            .stream(self.stream);
+        if let Some(max_rounds) = self.leader_max_rounds {
+            request = request.max_rounds(max_rounds);
+        }
+
+        request.cancellation(cancellation).run(leader_sink)
     }
 }
 

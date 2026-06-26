@@ -47,6 +47,9 @@ pub struct SubAgentSpec {
     pub context_mode: SubAgentContextMode,
     /// Shown in the `run_sub_agent` tool manifest for this session binding.
     pub description: String,
+    /// ReAct round cap for this sub-agent run. When omitted, [`AgentRequestBuilder`] uses its default.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub max_rounds: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,7 +131,7 @@ impl RunSubAgentTool {
             })?;
 
         let mode = resolve_context_mode(args.context.as_deref(), entry.context_mode)?;
-        info!(agent_id, ?mode, "run_sub_agent started");
+        info!(agent_id, ?mode, max_rounds = ?entry.max_rounds, "run_sub_agent started");
 
         let task_message = user_message_from_task(&args.task);
         let messages = match mode {
@@ -158,11 +161,16 @@ impl RunSubAgentTool {
             AgentRole::Sub,
         );
 
-        match AgentRequestBuilder::new()
+        let mut request = AgentRequestBuilder::new()
             .completion(completion)
             .toolbox(toolbox)
             .context(sub_context)
-            .stream(self.stream)
+            .stream(self.stream);
+        if let Some(max_rounds) = entry.max_rounds {
+            request = request.max_rounds(max_rounds);
+        }
+
+        match request
             .cancellation(self.cancellation.clone())
             .run(collector.clone())?
             .await

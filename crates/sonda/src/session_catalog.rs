@@ -301,6 +301,7 @@ pub(crate) fn normalize_sub_agents(
             agent_id,
             context_mode: entry.context_mode,
             description,
+            max_rounds: entry.max_rounds,
         });
     }
     Ok(out)
