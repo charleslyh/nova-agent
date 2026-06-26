@@ -4,7 +4,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, Instrument};
 
-use crate::agent::react;
+use crate::agent::react::{self, DEFAULT_MAX_ROUNDS};
 use crate::agent::requests::single::AgentEventSink;
 use crate::completion::ChatCompletion;
 use crate::context::ContextEngine;
@@ -17,6 +17,7 @@ pub struct AgentRequestBuilder {
     context: Option<Arc<dyn ContextEngine>>,
     toolbox: Option<Arc<Toolbox>>,
     stream: bool,
+    max_rounds: usize,
     cancellation: Option<CancellationToken>,
 }
 
@@ -34,6 +35,7 @@ impl AgentRequestBuilder {
             toolbox: None,
             cancellation: None,
             stream: true,
+            max_rounds: DEFAULT_MAX_ROUNDS,
         }
     }
 
@@ -54,6 +56,11 @@ impl AgentRequestBuilder {
 
     pub fn stream(mut self, stream: bool) -> Self {
         self.stream = stream;
+        self
+    }
+
+    pub fn max_rounds(mut self, max_rounds: usize) -> Self {
+        self.max_rounds = max_rounds;
         self
     }
 
@@ -80,7 +87,7 @@ impl AgentRequestBuilder {
         let toolbox = self.toolbox.unwrap_or_else(empty_toolbox);
         let cancellation = self.cancellation.unwrap_or_default();
 
-        info!(stream = self.stream, "agent request started");
+        info!(stream = self.stream, max_rounds = self.max_rounds, "agent request started");
         Ok(tokio::spawn(
             async move {
                 react::run(
@@ -88,6 +95,7 @@ impl AgentRequestBuilder {
                     completion,
                     toolbox,
                     self.stream,
+                    self.max_rounds,
                     cancellation,
                     sink,
                 )

@@ -15,11 +15,15 @@ use crate::context::ContextEngine;
 use crate::toolbox::{ToolCallEvent, ToolCallEventSink, ToolCallGroupId, Toolbox};
 use crate::types::ToolManifest;
 
+/// Default cap on ReAct completion+tool rounds per agent run.
+pub(crate) const DEFAULT_MAX_ROUNDS: usize = 10;
+
 pub(crate) async fn run(
     context: Arc<dyn ContextEngine>,
     completion: Arc<dyn ChatCompletion>,
     toolbox: Arc<Toolbox>,
     stream: bool,
+    max_rounds: usize,
     cancellation: CancellationToken,
     sink: Arc<dyn AgentEventSink>,
 ) -> std::result::Result<(), crate::types::MorayError> {
@@ -37,7 +41,16 @@ pub(crate) async fn run(
     }
     debug!("setup completed");
 
+    let mut round = 0usize;
     let exit_kind = loop {
+        round += 1;
+        if round > max_rounds {
+            warn!(max_rounds, round, "react run exceeded max rounds");
+            break AgentFinishKind::Failed {
+                reason: format!("exceeded maximum react rounds ({max_rounds})"),
+            };
+        }
+
         match react_once(
             &context,
             &tools,
