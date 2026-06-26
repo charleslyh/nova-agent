@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::spawn;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+use tracing::{info, warn, Instrument};
 
 use crate::{AgentRunner, Result, SessionError};
 use moray_core::{
@@ -240,62 +241,98 @@ impl SessionRuntime {
     }
 
     pub async fn submit(&self, input: TurnInput) -> Result<()> {
-        let cancellation = self.inflight.try_start_turn()?;
+        let cancellation = match self.inflight.try_start_turn() {
+            Ok(cancellation) => cancellation,
+            Err(err) => {
+                warn!(session_id = %self.session_id, "turn rejected: busy");
+                return Err(err);
+            }
+        };
+
+        let text_len = input.text.len();
+        let resource_count = input.resources.len();
+        info!(
+            session_id = %self.session_id,
+            text_len,
+            resource_count,
+            "turn accepted"
+        );
 
         let user_message = input.to_user_message();
 
         let event = event_of(self.session_id.as_str(), SessionEventKind::TurnAccepted { input });
         self.event_sink.append(&event)?;
 
-        self.context.ingest(vec![user_message]).await?;
+        if let Err(e) = self.context.ingest(vec![user_message]).await {
+            warn!(
+                session_id = %self.session_id,
+                error = %e,
+                "failed to ingest user message"
+            );
+            return Err(e.into());
+        }
 
         let session_id = self.session_id.clone();
         let runner = self.agent_runner.clone();
         let context = self.context.clone();
         let sink = self.event_sink.clone();
         let inflight = self.inflight.clone();
+        let parent_span = tracing::Span::current();
 
-        spawn(async move {
-            let (events_tx, mut events_rx) =
-                mpsc::channel::<MultiAgentResponseEvent>(SESSION_EVENT_CHANNEL_CAPACITY);
-            let multi_sink = Arc::new(ChannelMultiAgentEventSink::new(events_tx));
+        spawn(
+            async move {
+                let (events_tx, mut events_rx) =
+                    mpsc::channel::<MultiAgentResponseEvent>(SESSION_EVENT_CHANNEL_CAPACITY);
+                let multi_sink = Arc::new(ChannelMultiAgentEventSink::new(events_tx));
 
-            let consumer_session_id = session_id.clone();
-            let consumer_sink = sink.clone();
-            let consumer = spawn(async move {
-                while let Some(frame) = events_rx.recv().await {
-                    let event = SessionEvent {
-                        session_id: consumer_session_id.clone(),
-                        ts: timestamp_ms(),
-                        kind: SessionEventKind::AgentResponse(frame),
-                    };
-                    if consumer_sink.append(&event).is_err() {
-                        break;
+                let consumer_session_id = session_id.clone();
+                let consumer_sink = sink.clone();
+                let consumer = spawn(
+                    async move {
+                        while let Some(frame) = events_rx.recv().await {
+                            let event = SessionEvent {
+                                session_id: consumer_session_id.clone(),
+                                ts: timestamp_ms(),
+                                kind: SessionEventKind::AgentResponse(frame),
+                            };
+                            if consumer_sink.append(&event).is_err() {
+                                break;
+                            }
+                        }
                     }
+                    .in_current_span(),
+                );
+
+                let run_result = runner.run(context, cancellation, multi_sink).await;
+                let _ = consumer.await;
+                match &run_result {
+                    Ok(()) => info!(session_id = %session_id, "agent run completed"),
+                    Err(e) => warn!(session_id = %session_id, error = %e, "agent run failed"),
                 }
-            });
 
-            let run_result = runner.run(context, cancellation, multi_sink).await;
-            let _ = consumer.await;
-            let _ = run_result.map_err(SessionError::from);
+                let finish = event_of(session_id.as_str(), SessionEventKind::TurnFinish);
+                if sink.append(&finish).is_err() {
+                    warn!(session_id = %session_id, "failed to append TurnFinish event");
+                }
 
-            let finish = event_of(session_id.as_str(), SessionEventKind::TurnFinish);
-            let _ = sink.append(&finish);
-
-            inflight.complete_turn();
-        });
+                inflight.complete_turn();
+            }
+            .instrument(parent_span),
+        );
 
         Ok(())
     }
 
     /// Cancel the in-flight agent run for the current turn, if any. Idempotent when idle.
     pub fn cancel(&self) -> Result<()> {
+        info!(session_id = %self.session_id, "cancel requested");
         self.inflight.cancel();
         Ok(())
     }
 
     /// Reset the session working state and emit a [`SessionEventKind::Reset`] event.
     pub async fn reset(&self) -> Result<()> {
+        info!(session_id = %self.session_id, "reset started");
         self.inflight.cancel();
         self.inflight.wait_turn_done().await;
 
@@ -303,11 +340,12 @@ impl SessionRuntime {
 
         self.event_sink.append(&event_of(
             self.session_id.as_str(),
-            SessionEventKind::Reset
+            SessionEventKind::Reset,
         ))?;
 
         self.context.clear().await?;
 
+        info!(session_id = %self.session_id, "reset completed");
         Ok(())
     }
 }

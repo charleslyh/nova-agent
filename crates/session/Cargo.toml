@@ -18,3 +18,4 @@ serde = { version = "1.0.219", features = ["derive"], optional = true }
 tokio = { version = "1.44.2", features = ["rt", "sync"] }
 tokio-util = "0.7"
 thiserror = "2.0.12"
+tracing = "0.1"

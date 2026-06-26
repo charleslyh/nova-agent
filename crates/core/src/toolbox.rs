@@ -14,6 +14,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+use tracing::{info, warn, Instrument};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -363,8 +364,10 @@ impl ToolCallGroup {
         let tracker = Arc::new(ToolCallTracker::new(request, self.sink.clone()));
         self.tool_calls.push(tracker.clone());
         let cancellation = self.cancellation.clone();
-        self.join_set
-            .spawn(run_call(tool, auth, tracker, cancellation));
+        self.join_set.spawn(
+            run_call(tool, auth, tracker, cancellation)
+                .in_current_span(),
+        );
     }
 
     async fn join(mut self) -> (Vec<ToolCallRequest>, Vec<ToolCallResult>) {
@@ -457,6 +460,7 @@ async fn run_call(
     };
 
     if !allowed {
+        warn!(call_id = %call_id, tool = %name, "tool call denied by user");
         let _ = tracker
             .send_text(TOOL_CALL_DENIED_BY_USER.to_string())
             .await;
@@ -487,12 +491,20 @@ async fn run_call(
     } {
         Ok(()) => ToolCallStatus::Success,
         Err(e) => {
+            warn!(call_id = %call_id, tool = %name, error = %e, "tool call failed");
             let _ = tracker
                 .send_text(format!("tool error: {e}"))
                 .await;
             ToolCallStatus::Error
         }
     };
+
+    match status {
+        ToolCallStatus::Success => {
+            info!(call_id = %call_id, tool = %name, "tool call completed");
+        }
+        ToolCallStatus::Error | ToolCallStatus::Canceled => {}
+    }
 
     let _ = tracker.finish(status).await;
 }

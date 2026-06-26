@@ -24,6 +24,7 @@ pub(crate) async fn run(
     sink: Arc<dyn AgentEventSink>,
 ) -> std::result::Result<(), crate::types::MorayError> {
     let tools = toolbox.list_tools().await;
+    info!(stream, tool_count = tools.len(), "react run started");
     if let Err(e) = context.setup(&tools).await {
         warn!(error = %e, "context setup failed");
         sink.emit(AgentResponseEvent::Finished {
@@ -64,8 +65,8 @@ pub(crate) async fn run(
         debug!("teardown completed");
     }
 
+    info!(?exit_kind, "react run finished");
     sink.emit(AgentResponseEvent::Finished { kind: exit_kind }).await;
-    info!("finished");
     Ok(())
 }
 
@@ -128,6 +129,7 @@ async fn react_once(
     'completion: loop {
         let next = tokio::select! {
             _ = cancellation.cancelled() => {
+                info!("turn canceled");
                 loop_exit = Some(AgentFinishKind::Canceled);
                 break 'completion;
             }
@@ -176,7 +178,13 @@ async fn react_once(
                     id
                 };
 
-                if let Err(e) = toolbox.call_tool(group, tool_call).await {
+                if let Err(e) = toolbox.call_tool(group, tool_call.clone()).await {
+                    warn!(
+                        call_id = %tool_call.call_id,
+                        tool = %tool_call.name,
+                        error = %e,
+                        "tool call failed"
+                    );
                     loop_exit = Some(toolbox_err(e));
                     break 'completion;
                 }
@@ -205,6 +213,7 @@ async fn react_once(
     let (nb_tool_calls, ingest_messages) = if let Some(group) = tool_call_group.take() {
         let end_result = toolbox.end_group(group).await;
         if let Some(kind) = loop_exit {
+            debug!(?kind, "react_once exiting early with pending tool group");
             let _ = end_result;
             return Err(kind);
         }

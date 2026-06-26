@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 use crate::agent::requests::multi::harness::AgentHarnessFactory;
 use crate::agent::requests::multi::sink::{CollectingAgentEventSink, AgentRole, MultiAgentEventSink};
@@ -127,6 +128,7 @@ impl RunSubAgentTool {
             })?;
 
         let mode = resolve_context_mode(args.context.as_deref(), entry.context_mode)?;
+        info!(agent_id, ?mode, "run_sub_agent started");
 
         let task_message = user_message_from_task(&args.task);
         let messages = match mode {
@@ -179,6 +181,7 @@ impl RunSubAgentTool {
             Err(err) => responder.send_text(err).await?,
         }
 
+        info!(agent_id, "run_sub_agent completed");
         Ok(())
     }
 }

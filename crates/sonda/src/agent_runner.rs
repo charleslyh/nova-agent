@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use moray_core::{MorayError, MultiAgentsRequestBuilder};
 use moray_session::AgentRunner;
 use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 
 use crate::agent_harness_factory::SondaAgentHarnessFactory;
 use crate::completion_factory::SondaCompletionFactory;
@@ -92,6 +93,12 @@ impl AgentRunner for SondaAgentRunner {
             .get_session_sub_agents(self.session_id.as_str())
             .map_err(|e| MorayError::from(SondaError::from(e)))?;
 
+        info!(
+            session_id = %self.session_id,
+            sub_agent_count = sub_agents.len(),
+            "agent run started"
+        );
+
         match MultiAgentsRequestBuilder::new()
             .factory(self.harness_factory.clone())
             .stream(self.stream)
@@ -103,10 +110,24 @@ impl AgentRunner for SondaAgentRunner {
             .await
         {
             Ok(Ok(())) => Ok(()),
-            Ok(Err(err)) => Err(err),
-            Err(join_err) => Err(MorayError::Message(format!(
-                "agent run task failed: {join_err}"
-            ))),
+            Ok(Err(err)) => {
+                warn!(
+                    session_id = %self.session_id,
+                    error = %err,
+                    "agent run failed"
+                );
+                Err(err)
+            }
+            Err(join_err) => {
+                warn!(
+                    session_id = %self.session_id,
+                    error = %join_err,
+                    "agent run task join failed"
+                );
+                Err(MorayError::Message(format!(
+                    "agent run task failed: {join_err}"
+                )))
+            }
         }
     }
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, Instrument};
 
 use crate::agent::react;
 use crate::agent::requests::single::AgentEventSink;
@@ -80,15 +80,21 @@ impl AgentRequestBuilder {
         let toolbox = self.toolbox.unwrap_or_else(empty_toolbox);
         let cancellation = self.cancellation.unwrap_or_default();
 
-        info!("started");
-        Ok(tokio::spawn(react::run(
-            context,
-            completion,
-            toolbox,
-            self.stream,
-            cancellation,
-            sink,
-        )))
+        info!(stream = self.stream, "agent request started");
+        Ok(tokio::spawn(
+            async move {
+                react::run(
+                    context,
+                    completion,
+                    toolbox,
+                    self.stream,
+                    cancellation,
+                    sink,
+                )
+                .await
+            }
+            .in_current_span(),
+        ))
     }
 }
 

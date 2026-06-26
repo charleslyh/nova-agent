@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use tracing::{debug, info};
+
 use crate::{Result, SessionFactory, SessionRuntime, TurnInput};
 
 /// Live session runtimes keyed by `session_id`.
@@ -26,6 +28,7 @@ impl LiveSessions {
             .write()
             .expect("live sessions lock poisoned");
         if let Some(session) = guard.remove(session_id) {
+            info!(session_id, "session evicted");
             let _ = session.cancel();
         }
     }
@@ -64,6 +67,7 @@ impl LiveSessions {
         }
 
         let session = self.factory.create_session(session_id)?;
+        debug!(session_id, "session created");
 
         self.sessions
             .write()
