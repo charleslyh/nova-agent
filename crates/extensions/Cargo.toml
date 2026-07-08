@@ -11,7 +11,7 @@ default = ["serde"]
 serde = ["dep:serde", "moray-core/serde", "moray-session/serde"]
 
 [dependencies]
-async-openai = { version = "0.36.1", features = ["chat-completion"] }
+async-openai = { git = "https://git.woa.com/yuanbao-multimodal/async-openai.git", rev = "78d5540", features = ["chat-completion"] }
 async-stream = "0.3.6"
 async-trait = "0.1.88"
 futures = "0.3.31"

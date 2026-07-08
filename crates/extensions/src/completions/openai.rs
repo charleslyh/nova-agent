@@ -216,6 +216,67 @@ fn log_llm_request_protocol(model: &str, api_base: &str, wire_request: &AoCreate
     );
 }
 
+fn build_wire_request_body(req: &AoCreateRequest, extensions: &Value) -> Value {
+    if let Some(effort) = reasoning_effort_from_extensions(extensions).as_deref() {
+        merge_vllm_reasoning_extra_body(req, effort)
+    } else {
+        serde_json::to_value(req).unwrap_or_else(|_| Value::Object(Default::default()))
+    }
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn format_repro_curl(api_base: &str, body: &Value) -> String {
+    let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
+    let payload = serde_json::to_string(body).unwrap_or_else(|_| "{}".to_string());
+    format!(
+        "curl -sS -N -X POST {} \\\n  -H {} \\\n  -H {} \\\n  -H {} \\\n  -d {}",
+        shell_single_quote(&url),
+        shell_single_quote("Content-Type: application/json"),
+        shell_single_quote("Authorization: Bearer XXX"),
+        shell_single_quote("Accept: text/event-stream"),
+        shell_single_quote(&payload),
+    )
+}
+
+fn extract_invalid_stream_payload(error: &str) -> Option<String> {
+    const FAILED_DESER_PREFIX: &str = "failed deserialization of: ";
+    if let Some(rest) = error.strip_prefix(FAILED_DESER_PREFIX) {
+        return Some(rest.trim().to_string());
+    }
+    if let Some(idx) = error.find(" content:") {
+        return Some(error[idx + " content:".len()..].trim().to_string());
+    }
+    None
+}
+
+fn log_llm_stream_error(
+    model: &str,
+    api_base: &str,
+    completion_id: Option<&str>,
+    elapsed_ms: u64,
+    chunk_count: usize,
+    wire_request: &Value,
+    error: &str,
+) {
+    let invalid_payload = extract_invalid_stream_payload(error);
+    let repro_curl = format_repro_curl(api_base, wire_request);
+    warn!(
+        model = %model,
+        api_base = %api_base,
+        completion_id = completion_id.unwrap_or(""),
+        elapsed_ms,
+        chunk_count,
+        error = %error,
+        invalid_payload = invalid_payload.as_deref().unwrap_or(""),
+        request = %protocol_json_with_limit(wire_request, PROTOCOL_LOG_LIMIT),
+        repro_curl = %repro_curl,
+        "llm stream error"
+    );
+}
+
 fn count_message_roles(messages: &[ChatCompletionRequestMessage]) -> MessageRoleCounts {
     let mut counts = MessageRoleCounts::default();
     for message in messages {
@@ -530,6 +591,8 @@ impl ChatCompletion for OpenAIChatCompletion {
             log_llm_request_protocol(self.model.as_str(), self.api_base.as_str(), &req);
         }
 
+        let wire_request_body = build_wire_request_body(&req, &self.extensions);
+
         info!(
             model = %self.model,
             api_base = %self.api_base,
@@ -542,6 +605,7 @@ impl ChatCompletion for OpenAIChatCompletion {
             tools = %tool_names.join(","),
             stream = stream,
             reasoning_effort = ?reasoning_effort_raw,
+            request = %protocol_json_with_limit(&wire_request_body, PROTOCOL_LOG_LIMIT),
             "llm request"
         );
 
@@ -565,6 +629,8 @@ impl ChatCompletion for OpenAIChatCompletion {
         );
 
         let model = self.model.clone();
+        let api_base = self.api_base.clone();
+        let wire_request_for_error = wire_request_body.clone();
         let out = async_stream::stream! {
             let mut tool_buf: HashMap<u32, (String, String, String)> = HashMap::new();
             let mut refusal_buf = String::new();
@@ -585,14 +651,17 @@ impl ChatCompletion for OpenAIChatCompletion {
                 let resp = match item {
                     Ok(r) => r,
                     Err(e) => {
-                        warn!(
-                            model = %model,
-                            completion_id = completion_id.as_deref().unwrap_or(""),
-                            elapsed_ms = started_at.elapsed().as_millis() as u64,
-                            error = %e,
-                            "llm stream error"
+                        let error_text = e.to_string();
+                        log_llm_stream_error(
+                            model.as_str(),
+                            api_base.as_str(),
+                            completion_id.as_deref(),
+                            started_at.elapsed().as_millis() as u64,
+                            chunk_count,
+                            &wire_request_for_error,
+                            error_text.as_str(),
                         );
-                        yield Err(MorayError::Message(e.to_string()));
+                        yield Err(MorayError::Message(error_text));
                         return;
                     }
                 };
@@ -886,7 +955,8 @@ fn merge_tool_chunk(buf: &mut HashMap<u32, (String, String, String)>, tc: &AoMes
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_reasoning_content_delta, merge_vllm_reasoning_extra_body, parse_reasoning_effort,
+        extract_invalid_stream_payload, extract_reasoning_content_delta, format_repro_curl,
+        merge_vllm_reasoning_extra_body, parse_reasoning_effort,
         reasoning_effort_from_extensions, truncate_protocol_payload, AoCreateRequest,
         ParsedTextChunk, ReasoningEffort, ThinkTagStreamParser,
     };
@@ -1058,6 +1128,36 @@ mod tests {
             extract_reasoning_content_delta(&json).as_deref(),
             Some("step one")
         );
+    }
+
+    #[test]
+    fn extract_invalid_stream_payload_reads_async_openai_error_shapes() {
+        let error = "failed to deserialize api response: error:missing field `id` at line 1 column 64 content:{\"type\": \"keepalive\", \"sequence_number\": 0, \"scene\": \"toolcall\"}";
+        assert_eq!(
+            extract_invalid_stream_payload(error).as_deref(),
+            Some("{\"type\": \"keepalive\", \"sequence_number\": 0, \"scene\": \"toolcall\"}")
+        );
+        assert_eq!(
+            extract_invalid_stream_payload(
+                "failed deserialization of: {\"type\": \"keepalive\", \"sequence_number\": 1, \"scene\": \"toolcall\"}"
+            )
+            .as_deref(),
+            Some("{\"type\": \"keepalive\", \"sequence_number\": 1, \"scene\": \"toolcall\"}")
+        );
+    }
+
+    #[test]
+    fn format_repro_curl_includes_stream_headers_and_body() {
+        let body = serde_json::json!({
+            "model": "Hy3-H20-Temp",
+            "messages": [{"role": "user", "content": "hi"}],
+            "stream": true
+        });
+        let curl = format_repro_curl("http://example.com/v1/", &body);
+        assert!(curl.contains("http://example.com/v1/chat/completions"));
+        assert!(curl.contains("Authorization: Bearer XXX"));
+        assert!(curl.contains("text/event-stream"));
+        assert!(curl.contains("Hy3-H20-Temp"));
     }
 
     #[test]
