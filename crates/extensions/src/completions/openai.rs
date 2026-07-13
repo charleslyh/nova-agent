@@ -207,12 +207,34 @@ fn truncate_protocol_payload(payload: &str, limit: usize) -> String {
     format!("{}... [truncated, total {total} bytes]", &payload[..end])
 }
 
-fn log_llm_request_protocol(model: &str, api_base: &str, wire_request: &AoCreateRequest) {
-    debug!(
+fn log_llm_request(
+    model: &str,
+    api_base: &str,
+    roles: &MessageRoleCounts,
+    message_count: usize,
+    tool_names: &[&str],
+    stream: bool,
+    reasoning_effort: Option<&str>,
+    wire_request_body: &Value,
+) {
+    info!(
         model = %model,
         api_base = %api_base,
-        request = %protocol_json(wire_request),
-        "llm request protocol"
+        message_count,
+        system_messages = roles.system,
+        user_messages = roles.user,
+        assistant_messages = roles.assistant,
+        tool_messages = roles.tool,
+        tool_count = tool_names.len(),
+        tools = %tool_names.join(","),
+        stream,
+        reasoning_effort,
+        "llm request"
+    );
+    debug!(
+        model = %model,
+        request = %protocol_json_with_limit(wire_request_body, PROTOCOL_LOG_LIMIT),
+        "llm request body"
     );
 }
 
@@ -358,7 +380,7 @@ impl ThinkTagStreamParser {
     const THINK_CLOSE: &'static str = concat!("<", "/", "think", ">");
     const OPEN_TAGS: &'static [&'static str] =
         &["<think>", Self::THINK_OPEN];
-    const CLOSE_TAGS: &'static [&'static str] =
+    pub(crate) const CLOSE_TAGS: &'static [&'static str] =
         &["</think>", Self::THINK_CLOSE];
 
     fn new() -> Self {
@@ -384,20 +406,19 @@ impl ThinkTagStreamParser {
 
         loop {
             if self.in_think {
-                if let Some((idx, close_tag)) = find_earliest_tag(self.buffer.as_str(), Self::CLOSE_TAGS)
-                {
+                if let Some((idx, close_len)) = find_think_close(self.buffer.as_str()) {
                     if idx > 0 {
                         let think = self.buffer[..idx].to_string();
                         out.push(ParsedTextChunk::Think(think));
                     }
-                    self.buffer.drain(..idx + close_tag.len());
+                    self.buffer.drain(..idx + close_len);
                     out.push(ParsedTextChunk::ThinkDone);
                     self.in_think = false;
                     self.saw_close = true;
                     continue;
                 }
 
-                let keep = trailing_partial_len_multi(&self.buffer, Self::CLOSE_TAGS);
+                let keep = trailing_think_close_partial_len(self.buffer.as_str());
                 let flush_len = self.buffer.len().saturating_sub(keep);
                 if flush_len > 0 {
                     let think = self.buffer[..flush_len].to_string();
@@ -450,6 +471,43 @@ fn find_earliest_tag<'a>(haystack: &str, tags: &'a [&'static str]) -> Option<(us
     tags.iter()
         .filter_map(|tag| haystack.find(tag).map(|idx| (idx, *tag)))
         .min_by_key(|(idx, _)| *idx)
+}
+
+/// Close tags with optional id suffix, e.g. `</think:6124c78e>`.
+const DYNAMIC_THINK_CLOSE_PREFIXES: &[&str] = &["</think:", "</redacted_thinking:"];
+
+fn find_think_close(haystack: &str) -> Option<(usize, usize)> {
+    let mut best: Option<(usize, usize)> = None;
+    if let Some((idx, tag)) = find_earliest_tag(haystack, ThinkTagStreamParser::CLOSE_TAGS) {
+        best = Some((idx, tag.len()));
+    }
+    for prefix in DYNAMIC_THINK_CLOSE_PREFIXES {
+        let mut search_from = 0;
+        while let Some(rel) = haystack[search_from..].find(prefix) {
+            let idx = search_from + rel;
+            if let Some(end_rel) = haystack[idx..].find('>') {
+                let len = end_rel + 1;
+                if best.map_or(true, |(best_idx, _)| idx < best_idx) {
+                    best = Some((idx, len));
+                }
+            }
+            search_from = idx + prefix.len();
+        }
+    }
+    best
+}
+
+fn trailing_think_close_partial_len(haystack: &str) -> usize {
+    let mut keep = trailing_partial_len_multi(haystack, ThinkTagStreamParser::CLOSE_TAGS);
+    for prefix in DYNAMIC_THINK_CLOSE_PREFIXES {
+        if let Some(idx) = haystack.rfind(prefix) {
+            if !haystack[idx..].contains('>') {
+                keep = keep.max(haystack.len() - idx);
+            }
+        }
+        keep = keep.max(trailing_partial_len(haystack, prefix));
+    }
+    keep
 }
 
 fn trailing_partial_len_multi(haystack: &str, tags: &[&str]) -> usize {
@@ -518,6 +576,180 @@ fn extract_reasoning_content_delta(resp: &impl Serialize) -> Option<String> {
     }
 }
 
+fn extract_reasoning_content_message(resp: &impl Serialize) -> Option<String> {
+    let value = serde_json::to_value(resp).ok()?;
+    let content = value
+        .get("choices")?
+        .as_array()?
+        .first()?
+        .get("message")?
+        .get("reasoning_content")?
+        .as_str()?;
+    if content.is_empty() {
+        None
+    } else {
+        Some(content.to_string())
+    }
+}
+
+fn tool_calls_from_message(tool_calls: &[AoMessageToolCalls]) -> Vec<ToolCallRequest> {
+    let mut out = Vec::new();
+    for tc in tool_calls {
+        let AoMessageToolCalls::Function(call) = tc else {
+            continue;
+        };
+        let name = call.function.name.clone();
+        if name.is_empty() {
+            continue;
+        }
+        out.push(ToolCallRequest {
+            call_id: call.id.clone(),
+            name,
+            arguments: parse_tool_call_args(&call.function.arguments),
+        });
+    }
+    out.sort_by(|a, b| a.call_id.cmp(&b.call_id));
+    out
+}
+
+fn emit_parsed_content_chunks(
+    content: &str,
+    think_parser: &mut ThinkTagStreamParser,
+    reasoning_tag_fallback: bool,
+    saw_reasoning_content: bool,
+    activated_implicit_think: &mut bool,
+    saw_any_text: &mut bool,
+    text_chars: &mut usize,
+) -> Vec<ChatCompletionResponseChunk> {
+    if content.is_empty() {
+        return Vec::new();
+    }
+    if reasoning_tag_fallback && !saw_reasoning_content && !*activated_implicit_think {
+        think_parser.enter_implicit_think();
+        *activated_implicit_think = true;
+    }
+    let mut chunks = Vec::new();
+    for parsed in think_parser.push(content) {
+        if let Some(chunk) = yield_parsed_text_chunks(parsed, saw_any_text, text_chars) {
+            chunks.push(chunk);
+        }
+    }
+    chunks
+}
+
+async fn completion_non_stream(
+    client: &Client<OpenAIConfig>,
+    model: &str,
+    api_base: &str,
+    req: AoCreateRequest,
+    reasoning_effort: Option<ReasoningEffort>,
+    connect_started: Instant,
+    started_at: Instant,
+) -> Result<
+    Pin<Box<dyn Stream<Item = Result<ChatCompletionResponseChunk, MorayError>> + Send>>,
+    MorayError,
+> {
+    let resp = client.chat().create(req).await.map_err(|e| {
+        warn!(
+            model = %model,
+            api_base = %api_base,
+            elapsed_ms = connect_started.elapsed().as_millis() as u64,
+            error = %e,
+            "llm request failed"
+        );
+        MorayError::Message(e.to_string())
+    })?;
+    let connect_ms = connect_started.elapsed().as_millis() as u64;
+    info!(
+        model = %model,
+        connect_ms,
+        "llm response received"
+    );
+
+    let model = model.to_string();
+    let out = async_stream::stream! {
+        let mut saw_any_text = false;
+        let mut think_parser = ThinkTagStreamParser::new();
+        let reasoning_tag_fallback = reasoning_effort.is_some();
+        let mut saw_reasoning_content = false;
+        let mut activated_implicit_think = false;
+        let mut text_chars = 0usize;
+        let completion_id = Some(resp.id.clone());
+        let usage = resp.usage.clone();
+
+        let Some(choice) = resp.choices.first() else {
+            yield Err(MorayError::Message("llm response had no choices".to_string()));
+            return;
+        };
+
+        if let Some(reasoning) = extract_reasoning_content_message(&resp) {
+            saw_reasoning_content = true;
+            yield Ok(ChatCompletionResponseChunk::Think(reasoning));
+            yield Ok(ChatCompletionResponseChunk::ThinkDone);
+        }
+
+        let content = choice.message.content.as_deref().unwrap_or("");
+        let refusal = choice.message.refusal.clone().unwrap_or_default();
+        let wire_content = content.to_string();
+        for chunk in emit_parsed_content_chunks(
+            content,
+            &mut think_parser,
+            reasoning_tag_fallback,
+            saw_reasoning_content,
+            &mut activated_implicit_think,
+            &mut saw_any_text,
+            &mut text_chars,
+        ) {
+            yield Ok(chunk);
+        }
+        for parsed in think_parser.finish() {
+            if let Some(chunk) = yield_parsed_text_chunks(parsed, &mut saw_any_text, &mut text_chars) {
+                yield Ok(chunk);
+            }
+        }
+
+        let tool_calls = choice
+            .message
+            .tool_calls
+            .as_deref()
+            .map(tool_calls_from_message)
+            .unwrap_or_default();
+        let tools_empty = tool_calls.is_empty();
+        let fr = finalize_completion_reason(choice.finish_reason.as_ref(), refusal.clone());
+        let response_protocol = build_response_protocol(
+            completion_id.clone(),
+            wire_content,
+            refusal,
+            &tool_calls,
+            choice.finish_reason.as_ref(),
+            usage.clone(),
+            1,
+        );
+        if saw_any_text && !tools_empty {
+            yield Ok(ChatCompletionResponseChunk::TextDone);
+        }
+        for tc in tool_calls {
+            yield Ok(ChatCompletionResponseChunk::ToolCall(tc));
+        }
+        if saw_any_text && tools_empty {
+            yield Ok(ChatCompletionResponseChunk::TextDone);
+        }
+        yield Ok(ChatCompletionResponseChunk::Done { reason: fr.clone() });
+        log_llm_completed(
+            model.as_str(),
+            connect_ms,
+            Some(started_at.elapsed().as_millis() as u64),
+            started_at.elapsed().as_millis() as u64,
+            text_chars,
+            choice.finish_reason.as_ref(),
+            &fr,
+            &response_protocol,
+        );
+    };
+
+    Ok(Box::pin(out))
+}
+
 fn yield_parsed_text_chunks(
     parsed: ParsedTextChunk,
     saw_any_text: &mut bool,
@@ -579,38 +811,32 @@ impl ChatCompletion for OpenAIChatCompletion {
             ..Default::default()
         };
 
-        if let Some(effort) = reasoning_effort_raw.as_deref() {
-            let wire = merge_vllm_reasoning_extra_body(&req, effort);
-            debug!(
-                model = %self.model,
-                api_base = %self.api_base,
-                request = %protocol_json(&wire),
-                "llm request protocol (with chat_template_kwargs)"
-            );
-        } else {
-            log_llm_request_protocol(self.model.as_str(), self.api_base.as_str(), &req);
-        }
-
         let wire_request_body = build_wire_request_body(&req, &self.extensions);
-
-        info!(
-            model = %self.model,
-            api_base = %self.api_base,
-            message_count = messages.len(),
-            system_messages = roles.system,
-            user_messages = roles.user,
-            assistant_messages = roles.assistant,
-            tool_messages = roles.tool,
-            tool_count = tools.len(),
-            tools = %tool_names.join(","),
-            stream = stream,
-            reasoning_effort = ?reasoning_effort_raw,
-            request = %protocol_json_with_limit(&wire_request_body, PROTOCOL_LOG_LIMIT),
-            "llm request"
+        log_llm_request(
+            self.model.as_str(),
+            self.api_base.as_str(),
+            &roles,
+            messages.len(),
+            &tool_names,
+            stream,
+            reasoning_effort_raw.as_deref(),
+            &wire_request_body,
         );
 
         let started_at = Instant::now();
         let connect_started = Instant::now();
+        if !stream {
+            return completion_non_stream(
+                &self.client,
+                self.model.as_str(),
+                self.api_base.as_str(),
+                req,
+                reasoning_effort,
+                connect_started,
+                started_at,
+            )
+            .await;
+        }
         let mut upstream = self.client.chat().create_stream(req).await.map_err(|e| {
             warn!(
                 model = %self.model,
@@ -955,7 +1181,8 @@ fn merge_tool_chunk(buf: &mut HashMap<u32, (String, String, String)>, tc: &AoMes
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_invalid_stream_payload, extract_reasoning_content_delta, format_repro_curl,
+        extract_invalid_stream_payload, extract_reasoning_content_delta,
+        extract_reasoning_content_message, format_repro_curl,
         merge_vllm_reasoning_extra_body, parse_reasoning_effort,
         reasoning_effort_from_extensions, truncate_protocol_payload, AoCreateRequest,
         ParsedTextChunk, ReasoningEffort, ThinkTagStreamParser,
@@ -1080,6 +1307,34 @@ mod tests {
     }
 
     #[test]
+    fn parser_implicit_think_splits_on_think_close_tag_with_id() {
+        let mut p = ThinkTagStreamParser::new();
+        p.enter_implicit_think();
+        assert_eq!(p.push("reasoning"), vec![think("reasoning")]);
+        assert_eq!(
+            p.push("</think:6124c78e>"),
+            vec![ParsedTextChunk::ThinkDone]
+        );
+        assert_eq!(p.push("你好！"), vec![text("你好！")]);
+        assert!(p.finish().is_empty());
+    }
+
+    #[test]
+    fn parser_implicit_think_splits_on_think_close_tag_with_id_in_one_delta() {
+        let mut p = ThinkTagStreamParser::new();
+        p.enter_implicit_think();
+        assert_eq!(
+            p.push("reasoning</think:6124c78e>你好！"),
+            vec![
+                think("reasoning"),
+                ParsedTextChunk::ThinkDone,
+                text("你好！"),
+            ],
+        );
+        assert!(p.finish().is_empty());
+    }
+
+    #[test]
     fn parser_treats_invalid_tag_as_plain_text() {
         let mut p = ThinkTagStreamParser::new();
         assert_eq!(p.push("<thinking>foo"), vec![text("<thinking>foo")]);
@@ -1114,6 +1369,23 @@ mod tests {
         assert_eq!(
             body["chat_template_kwargs"]["reasoning_effort"].as_str(),
             Some("high")
+        );
+    }
+
+    #[test]
+    fn extract_reasoning_content_message_reads_message_json() {
+        let json = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "hello",
+                    "reasoning_content": "step one"
+                }
+            }]
+        });
+        assert_eq!(
+            extract_reasoning_content_message(&json).as_deref(),
+            Some("step one")
         );
     }
 
