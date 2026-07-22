@@ -21,13 +21,17 @@ const RUN_SUB_AGENT_PARAMETERS: &str = r#"{
   "properties": {
     "agent_id": { "type": "string", "description": "Sub-agent id to run" },
     "task": { "type": "string", "description": "Task description for the sub-agent" },
+    "intent": {
+      "type": "string",
+      "description": "Extremely short label of why this sub-agent is being called, inferred by the model. Usually 1-3 keywords only (e.g. Chinese keywords like \"查天气\" or \"对比股价\"). Do not copy the full task."
+    },
     "context": {
       "type": "string",
       "enum": ["isolated", "branch"],
       "description": "Optional override; omit to use the sub-agent's session default. isolated: delegate a standalone sub-task—the sub-agent sees only task, so put all required facts, constraints, and inputs into task. Prefer for independent or parallel work, specialist runs, or when prior chat is irrelevant/noisy. branch: delegate work that depends on prior conversation—the sub-agent inherits the leader transcript plus task. Prefer for follow-ups, references to earlier user messages, disambiguation, or continuing the same thread."
     }
   },
-  "required": ["agent_id", "task"]
+  "required": ["agent_id", "task", "intent"]
 }"#;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -56,6 +60,9 @@ pub struct SubAgentSpec {
 struct RunSubAgentArgs {
     agent_id: String,
     task: String,
+    /// Ultra-short caller intent (1–3 keywords); used for UI / logging only.
+    #[serde(default)]
+    intent: String,
     #[serde(default)]
     context: Option<String>,
 }
@@ -131,7 +138,13 @@ impl RunSubAgentTool {
             })?;
 
         let mode = resolve_context_mode(args.context.as_deref(), entry.context_mode)?;
-        info!(agent_id, ?mode, max_rounds = ?entry.max_rounds, "run_sub_agent started");
+        info!(
+            agent_id,
+            intent = %args.intent,
+            ?mode,
+            max_rounds = ?entry.max_rounds,
+            "run_sub_agent started"
+        );
 
         let task_message = user_message_from_task(&args.task);
         let messages = match mode {
@@ -211,6 +224,7 @@ pub(crate) fn resolve_context_mode(
 pub(crate) fn sub_agent_manifest_description(sub_agents: &[SubAgentSpec]) -> String {
     let mut lines = vec![
         "Delegate a task to a sub-agent. Returns the sub-agent's final answer.".into(),
+        "Always set `intent` to a 1-3 keyword summary of why you are calling the sub-agent.".into(),
         "".into(),
         "Available sub-agents:".into(),
     ];
