@@ -969,6 +969,30 @@ impl ChatCompletion for OpenAIChatCompletion {
                 }
 
                 if finish_reason.is_some() {
+                    while let Some(item) = upstream.next().await {
+                        match item {
+                            Ok(extra) => {
+                                chunk_count += 1;
+                                debug!(
+                                    completion_id = %extra.id,
+                                    chunk_index = chunk_count,
+                                    chunk = %protocol_json(&extra),
+                                    "llm response chunk (post-finish)"
+                                );
+                                if let Some(chunk_usage) = extra.usage {
+                                    usage = Some(chunk_usage);
+                                }
+                            }
+                            Err(e) => {
+                                debug!(
+                                    completion_id = completion_id.as_deref().unwrap_or(""),
+                                    error = %e,
+                                    "llm post-finish drain error (ignored)"
+                                );
+                                break;
+                            }
+                        }
+                    }
                     if in_reasoning_stream {
                         yield Ok(ChatCompletionResponseChunk::ThinkDone);
                     }
