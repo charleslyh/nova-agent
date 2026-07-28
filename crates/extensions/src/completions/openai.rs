@@ -1034,7 +1034,6 @@ impl ChatCompletion for OpenAIChatCompletion {
                     if saw_any_text && tools_empty {
                         yield Ok(ChatCompletionResponseChunk::TextDone);
                     }
-                    yield Ok(ChatCompletionResponseChunk::Done { reason: fr.clone() });
                     log_llm_completed(
                         model.as_str(),
                         connect_ms,
@@ -1045,6 +1044,7 @@ impl ChatCompletion for OpenAIChatCompletion {
                         &fr,
                         &response_protocol,
                     );
+                    yield Ok(ChatCompletionResponseChunk::Done { reason: fr.clone() });
                     return;
                 }
             }
