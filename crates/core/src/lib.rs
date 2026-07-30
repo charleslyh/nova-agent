@@ -15,7 +15,7 @@ pub use agent::{
 };
 pub use completion::{
     ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,
-    ChatCompletionResponseChunk,
+    ChatCompletionResponseChunk, ChatCompletionUsage,
 };
 pub use context::ContextEngine;
 pub use toolbox::{

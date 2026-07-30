@@ -28,7 +28,7 @@ use futures::Stream;
 use futures::StreamExt;
 use moray_core::{
     ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,
-    ChatCompletionResponseChunk, MorayError, ToolCallRequest, ToolManifest,
+    ChatCompletionResponseChunk, ChatCompletionUsage, MorayError, ToolCallRequest, ToolManifest,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -734,7 +734,10 @@ async fn completion_non_stream(
         if saw_any_text && tools_empty {
             yield Ok(ChatCompletionResponseChunk::TextDone);
         }
-        yield Ok(ChatCompletionResponseChunk::Done { reason: fr.clone() });
+        yield Ok(ChatCompletionResponseChunk::Done {
+            reason: fr.clone(),
+            usage: map_usage(usage.as_ref(), Some(&response_protocol)),
+        });
         log_llm_completed(
             model.as_str(),
             connect_ms,
@@ -1034,6 +1037,7 @@ impl ChatCompletion for OpenAIChatCompletion {
                     if saw_any_text && tools_empty {
                         yield Ok(ChatCompletionResponseChunk::TextDone);
                     }
+                    let mapped_usage = map_usage(usage.as_ref(), Some(&response_protocol));
                     log_llm_completed(
                         model.as_str(),
                         connect_ms,
@@ -1044,7 +1048,10 @@ impl ChatCompletion for OpenAIChatCompletion {
                         &fr,
                         &response_protocol,
                     );
-                    yield Ok(ChatCompletionResponseChunk::Done { reason: fr.clone() });
+                    yield Ok(ChatCompletionResponseChunk::Done {
+                        reason: fr.clone(),
+                        usage: mapped_usage,
+                    });
                     return;
                 }
             }
@@ -1059,10 +1066,6 @@ impl ChatCompletion for OpenAIChatCompletion {
             }
 
             let fr = finalize_completion_reason(None, refusal_buf.clone());
-            yield Ok(ChatCompletionResponseChunk::Done {
-                reason: fr.clone(),
-            });
-
             let response_protocol = build_response_protocol(
                 completion_id.clone(),
                 wire_content,
@@ -1072,6 +1075,10 @@ impl ChatCompletion for OpenAIChatCompletion {
                 usage.clone(),
                 chunk_count,
             );
+            yield Ok(ChatCompletionResponseChunk::Done {
+                reason: fr.clone(),
+                usage: map_usage(usage.as_ref(), Some(&response_protocol)),
+            });
             log_llm_completed(
                 model.as_str(),
                 connect_ms,
@@ -1090,6 +1097,41 @@ impl ChatCompletion for OpenAIChatCompletion {
 
         Ok(Box::pin(out))
     }
+}
+
+fn map_usage(
+    usage: Option<&CompletionUsage>,
+    protocol: Option<&LlmResponseProtocol>,
+) -> Option<ChatCompletionUsage> {
+    let u = usage?;
+    let (cached, reasoning) = protocol
+        .and_then(|p| extract_usage_details(p))
+        .unwrap_or((0, 0));
+    Some(ChatCompletionUsage {
+        prompt_tokens: u.prompt_tokens,
+        completion_tokens: u.completion_tokens,
+        total_tokens: u.total_tokens,
+        cached_tokens: cached,
+        reasoning_tokens: reasoning,
+    })
+}
+
+fn extract_usage_details(protocol: &LlmResponseProtocol) -> Option<(u32, u32)> {
+    let value = serde_json::to_value(protocol).ok()?;
+    let usage = value.get("usage")?;
+    let cached = usage
+        .get("prompt_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32)
+        .unwrap_or(0);
+    let reasoning = usage
+        .get("completion_tokens_details")
+        .and_then(|d| d.get("reasoning_tokens"))
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32)
+        .unwrap_or(0);
+    Some((cached, reasoning))
 }
 
 fn build_response_protocol(

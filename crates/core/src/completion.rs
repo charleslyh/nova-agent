@@ -59,6 +59,19 @@ pub enum ChatCompletionFinishReason {
     },
 }
 
+/// Token accounting for a single model round.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct ChatCompletionUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub cached_tokens: u32,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub reasoning_tokens: u32,
+}
+
 /// One item from a [`ChatCompletion::completion`] stream.
 ///
 /// Canonical order for one model round:
@@ -84,7 +97,14 @@ pub enum ChatCompletionResponseChunk {
     ThinkDone,
     TextDone,
     ToolCall(ToolCallRequest),
-    Done { reason: ChatCompletionFinishReason },
+    Done {
+        reason: ChatCompletionFinishReason,
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, skip_serializing_if = "Option::is_none")
+        )]
+        usage: Option<ChatCompletionUsage>,
+    },
 }
 
 /// Streaming completion provider (vendor implementations).

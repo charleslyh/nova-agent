@@ -240,6 +240,7 @@ mod tests {
         AgentResponseEvent::CompletionResponse {
             chunk: ChatCompletionResponseChunk::Done {
                 reason: ChatCompletionFinishReason::Stop,
+                usage: None,
             },
         }
     }

@@ -97,7 +97,7 @@ fn fold_agent_event(
             ChatCompletionResponseChunk::ToolCall(tc) => {
                 pending_tools.push(tc.clone());
             }
-            ChatCompletionResponseChunk::Done { reason } => {
+            ChatCompletionResponseChunk::Done { reason, .. } => {
                 let refusal_str = match reason {
                     ChatCompletionFinishReason::Refusal { reason } => {
                         reason.as_deref().unwrap_or("")
@@ -216,6 +216,7 @@ mod tests {
         AgentResponseEvent::CompletionResponse {
             chunk: ChatCompletionResponseChunk::Done {
                 reason: ChatCompletionFinishReason::Stop,
+                usage: None,
             },
         }
     }

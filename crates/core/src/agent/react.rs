@@ -199,7 +199,7 @@ async fn react_once(
                     break 'completion;
                 }
             }
-            ChatCompletionResponseChunk::Done { reason } => match reason {
+            ChatCompletionResponseChunk::Done { reason, .. } => match reason {
                 ChatCompletionFinishReason::Refusal { reason } => {
                     info!(?reason, "completion refused");
                     loop_exit = Some(AgentFinishKind::Refused { reason });

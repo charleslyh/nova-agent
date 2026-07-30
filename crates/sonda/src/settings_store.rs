@@ -535,6 +535,7 @@ mod tests {
             Ok(Box::pin(futures::stream::once(async {
                 Ok(ChatCompletionResponseChunk::Done {
                     reason: ChatCompletionFinishReason::Stop,
+                    usage: None,
                 })
             })))
         }
