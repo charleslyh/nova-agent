@@ -104,7 +104,7 @@ impl CliToolbox {
         let Some(tool) = self.tools.get(name) else {
             return Err(MorayError::Message(format!("unknown tool {name}")));
         };
-        tool.call(arguments, &PrintingResponder).await
+        tool.call("cli", arguments, &PrintingResponder).await
     }
 }
 

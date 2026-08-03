@@ -39,6 +39,7 @@ impl TypedTool for ShellTool {
 
     async fn run(
         &self,
+        _call_id: &str,
         args: ShellArgs,
         responder: &dyn ToolCallResponder,
     ) -> Result<(), MorayError> {

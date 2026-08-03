@@ -20,6 +20,7 @@ impl TypedTool for WebSearchTool {
 
     async fn run(
         &self,
+        _call_id: &str,
         args: WebSearchArgs,
         responder: &dyn ToolCallResponder,
     ) -> Result<(), MorayError> {

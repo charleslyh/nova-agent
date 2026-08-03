@@ -149,7 +149,7 @@ pub trait Tool: Send + Sync {
 
     /// Execute the tool. Model-visible output goes through [`ToolCallResponder`]; lifecycle events
     /// (`Requested`, `Started`, `Finished`) are emitted only by [`Toolbox`].
-    async fn call(&self, args: Value, responder: &dyn ToolCallResponder) -> Result<(), MorayError>;
+    async fn call(&self, call_id: &str, args: Value, responder: &dyn ToolCallResponder) -> Result<(), MorayError>;
 }
 
 /// Typed tool: per-tool [`Args`](Self::Args) + [`run`](Self::run). Metadata (description, JSON schema) comes from the app-layer tool catalog.
@@ -160,8 +160,9 @@ pub trait TypedTool: Send + Sync {
 
     /// Emit model-visible output via `responder` (supports streaming); return only on failure.
     async fn run(
-        &self,
-        args: Self::Args,
+      &self,
+        call_id: &str,
+      args: Self::Args,
         responder: &dyn ToolCallResponder,
     ) -> Result<(), MorayError>;
 }
@@ -175,7 +176,7 @@ where
         T::NAME
     }
 
-    async fn call(&self, args: Value, responder: &dyn ToolCallResponder) -> Result<(), MorayError> {
+    async fn call(&self, call_id: &str, args: Value, responder: &dyn ToolCallResponder) -> Result<(), MorayError> {
         let tool_name = T::NAME;
         tracing::info!(
             "[tool] {} args={}",
@@ -186,7 +187,7 @@ where
             MorayError::Message(format!("{tool_name}: invalid JSON arguments: {e}"))
         })?;
         let result = self
-            .run(args, responder)
+            .run(call_id, args, responder)
             .await
             .map_err(|e| MorayError::Message(format!("{tool_name}: {e}")));
         tracing::info!("[tool] {} result={:?}", tool_name, result);
@@ -487,7 +488,7 @@ async fn run_call(
             finish_canceled(&tracker).await;
             return;
         }
-        res = tool.call(arguments, tracker.as_ref()) => res,
+        res = tool.call(&call_id, arguments, tracker.as_ref()) => res,
     } {
         Ok(()) => ToolCallStatus::Success,
         Err(e) => {
@@ -801,6 +802,7 @@ mod tests {
 
         async fn run(
             &self,
+            _call_id: &str,
             args: Value,
             responder: &dyn ToolCallResponder,
         ) -> Result<(), MorayError> {
@@ -823,6 +825,7 @@ mod tests {
 
         async fn run(
             &self,
+            _call_id: &str,
             _: Value,
             _responder: &dyn ToolCallResponder,
         ) -> Result<(), MorayError> {
@@ -840,6 +843,7 @@ mod tests {
 
         async fn run(
             &self,
+            _call_id: &str,
             _: Value,
             _responder: &dyn ToolCallResponder,
         ) -> Result<(), MorayError> {

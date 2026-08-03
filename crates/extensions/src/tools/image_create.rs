@@ -28,6 +28,7 @@ impl TypedTool for ImageCreateTool {
 
     async fn run(
         &self,
+        _call_id: &str,
         args: ImageCreateArgs,
         responder: &dyn ToolCallResponder,
     ) -> Result<(), MorayError> {

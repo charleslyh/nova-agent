@@ -104,6 +104,7 @@ impl Tool for RunSubAgentTool {
 
     async fn call(
         &self,
+        _call_id: &str,
         args: Value,
         responder: &dyn ToolCallResponder,
     ) -> std::result::Result<(), MorayError> {

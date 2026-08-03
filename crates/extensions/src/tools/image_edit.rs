@@ -35,6 +35,7 @@ impl TypedTool for ImageEditTool {
 
     async fn run(
         &self,
+        _call_id: &str,
         args: ImageEditArgs,
         responder: &dyn ToolCallResponder,
     ) -> Result<(), MorayError> {
