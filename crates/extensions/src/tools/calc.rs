@@ -17,7 +17,6 @@ impl TypedTool for CalcTool {
 
     async fn run(
         &self,
-        _call_id: &str,
         args: CalcArgs,
         responder: &dyn ToolCallResponder,
     ) -> Result<(), MorayError> {

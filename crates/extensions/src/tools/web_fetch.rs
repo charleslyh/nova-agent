@@ -29,7 +29,6 @@ impl TypedTool for WebFetchTool {
 
     async fn run(
         &self,
-        _call_id: &str,
         args: WebFetchArgs,
         responder: &dyn ToolCallResponder,
     ) -> Result<(), MorayError> {

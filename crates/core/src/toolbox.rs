@@ -161,7 +161,6 @@ pub trait TypedTool: Send + Sync {
     /// Emit model-visible output via `responder` (supports streaming); return only on failure.
     async fn run(
       &self,
-        call_id: &str,
       args: Self::Args,
         responder: &dyn ToolCallResponder,
     ) -> Result<(), MorayError>;
@@ -187,7 +186,7 @@ where
             MorayError::Message(format!("{tool_name}: invalid JSON arguments: {e}"))
         })?;
         let result = self
-            .run(call_id, args, responder)
+            .run(args, responder)
             .await
             .map_err(|e| MorayError::Message(format!("{tool_name}: {e}")));
         tracing::info!("[tool] {} result={:?}", tool_name, result);
@@ -802,7 +801,6 @@ mod tests {
 
         async fn run(
             &self,
-            _call_id: &str,
             args: Value,
             responder: &dyn ToolCallResponder,
         ) -> Result<(), MorayError> {
@@ -825,7 +823,6 @@ mod tests {
 
         async fn run(
             &self,
-            _call_id: &str,
             _: Value,
             _responder: &dyn ToolCallResponder,
         ) -> Result<(), MorayError> {
@@ -843,7 +840,6 @@ mod tests {
 
         async fn run(
             &self,
-            _call_id: &str,
             _: Value,
             _responder: &dyn ToolCallResponder,
         ) -> Result<(), MorayError> {

@@ -30,7 +30,6 @@ impl TypedTool for FileReadTool {
 
     async fn run(
         &self,
-        _call_id: &str,
         args: FileReadArgs,
         responder: &dyn ToolCallResponder,
     ) -> Result<(), MorayError> {

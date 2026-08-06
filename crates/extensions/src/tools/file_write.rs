@@ -29,7 +29,6 @@ impl TypedTool for FileWriteTool {
 
     async fn run(
         &self,
-        _call_id: &str,
         args: FileWriteArgs,
         responder: &dyn ToolCallResponder,
     ) -> Result<(), MorayError> {
