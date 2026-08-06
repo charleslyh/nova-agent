@@ -15,6 +15,19 @@ use crate::context::ContextEngine;
 use crate::toolbox::{ToolCallEvent, ToolCallEventSink, ToolCallGroupId, Toolbox};
 use crate::types::ToolManifest;
 
+/// Prompt injected as a User message when the agent exceeds its configured
+/// round limit. Instructs the LLM to produce a text-only summary without
+/// attempting any tool calls.
+const ROUND_LIMIT_PROMPT: &str = "\
+CRITICAL: The maximum number of agent steps has been reached. \
+Tools are disabled until the next user input. \
+Respond with text only and do not attempt any tool calls.\n\n\
+Provide the best possible final answer using only the conversation \
+and tool results already available. Briefly state that the agent step \
+limit was reached, summarize what was accomplished, disclose any \
+unfinished work, and give actionable next steps. \
+Do not claim that unverified work was completed.";
+
 pub(crate) async fn run(
     context: Arc<dyn ContextEngine>,
     completion: Arc<dyn ChatCompletion>,
@@ -41,13 +54,49 @@ pub(crate) async fn run(
     let mut round = 0usize;
     let exit_kind = loop {
         round += 1;
+
+        // --- Round-limit graceful wrap-up ---
         if round > max_rounds {
-            warn!(max_rounds, round, "react run exceeded max rounds");
-            break AgentFinishKind::Failed {
-                reason: format!("exceeded maximum react rounds ({max_rounds})"),
-            };
+            warn!(max_rounds, round, "react run exceeded max rounds, entering wrap-up");
+
+            // Inject the round-limit prompt so the LLM knows tools are disabled.
+            if let Err(e) = context
+                .ingest(vec![ChatCompletionRequestMessage::User {
+                    content: ROUND_LIMIT_PROMPT.to_string(),
+                }])
+                .await
+            {
+                warn!(error = %e, "failed to inject round-limit prompt");
+                break AgentFinishKind::Failed {
+                    reason: e.to_string(),
+                };
+            }
+
+            // Execute one final completion with NO tools (physically prevents tool calls).
+            match react_once(
+                &context,
+                &[],  // empty tools — LLM cannot produce tool calls
+                &completion,
+                stream,
+                &toolbox,
+                &cancellation,
+                &sink,
+            )
+            .await
+            {
+                Ok(_) => {
+                    info!("wrap-up round completed");
+                }
+                Err(kind) => {
+                    warn!(?kind, "wrap-up round failed, degrading to error");
+                    break kind;
+                }
+            }
+
+            break AgentFinishKind::RoundLimitReached;
         }
 
+        // --- Normal react step ---
         match react_once(
             &context,
             &tools,

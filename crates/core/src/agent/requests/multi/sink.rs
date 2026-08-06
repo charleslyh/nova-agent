@@ -191,7 +191,7 @@ impl SubAgentResultReducer {
                 _ => {}
             },
             AgentResponseEvent::Finished { kind } => match kind {
-                AgentFinishKind::Succeeded => {
+                AgentFinishKind::Succeeded | AgentFinishKind::RoundLimitReached => {
                     self.capture_pending_if_nonempty();
                 }
                 AgentFinishKind::Canceled => {

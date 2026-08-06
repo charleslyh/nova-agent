@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 pub enum AgentFinishKind {
     Succeeded,
     Canceled,
+    /// The agent reached its configured round limit. A final text-only summary
+    /// was generated — this is NOT an error condition.
+    RoundLimitReached,
     Refused {
         #[cfg_attr(
             feature = "serde",
