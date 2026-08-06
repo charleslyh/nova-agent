@@ -44,7 +44,7 @@
             v-model="draftDesc"
             class="field-input field-textarea"
             rows="2"
-            placeholder="供 leader 在 run_sub_agent 工具中识别此 sub-agent 绑定；在会话中配置"
+            placeholder="供 leader 在 agent 工具中识别此 sub-agent 绑定；在会话中配置"
             spellcheck="false"
           />
         </label>

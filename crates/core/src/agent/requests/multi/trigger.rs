@@ -14,7 +14,7 @@ use crate::{
     ToolManifest, Toolbox,
 };
 
-pub const RUN_SUB_AGENT_TOOL_NAME: &str = "run_sub_agent";
+pub const RUN_SUB_AGENT_TOOL_NAME: &str = "agent";
 
 const RUN_SUB_AGENT_PARAMETERS: &str = r#"{
   "type": "object",
