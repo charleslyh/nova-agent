@@ -104,20 +104,21 @@ impl Tool for RunSubAgentTool {
 
     async fn call(
         &self,
-        _call_id: &str,
+        call_id: &str,
         args: Value,
         responder: &dyn ToolCallResponder,
     ) -> std::result::Result<(), MorayError> {
         let args: RunSubAgentArgs = serde_json::from_value(args).map_err(|e| {
             MorayError::Message(format!("invalid run_sub_agent arguments: {e}"))
         })?;
-        self.run_inner(args, responder).await
+        self.run_inner(call_id, args, responder).await
     }
 }
 
 impl RunSubAgentTool {
     async fn run_inner(
         &self,
+        call_id: &str,
         args: RunSubAgentArgs,
         responder: &dyn ToolCallResponder,
     ) -> std::result::Result<(), MorayError> {
@@ -173,6 +174,7 @@ impl RunSubAgentTool {
             self.events.clone(),
             agent_id.to_string(),
             AgentRole::Sub,
+            Some(call_id.to_string()),
         );
 
         let mut request = AgentRequestBuilder::new()

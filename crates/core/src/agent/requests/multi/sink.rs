@@ -23,11 +23,18 @@ pub enum AgentRole {
 pub struct MultiAgentResponseEvent {
     pub agent_id: String,
     pub role: AgentRole,
+    /// For `Sub` events: the leader's tool `call_id` that triggered this sub-agent run.
+    /// Enables the consumer to correlate concurrent calls to the same `agent_id`.
+    #[cfg_attr(
+        feature = "serde",
+        serde(skip_serializing_if = "Option::is_none", default)
+    )]
+    pub call_id: Option<String>,
     pub data: AgentResponseEvent,
 }
 
 impl MultiAgentResponseEvent {
-    /// Flatten `agent_id`, `role`, and response fields into one JSON object.
+    /// Flatten `agent_id`, `role`, `call_id`, and response fields into one JSON object.
     #[cfg(feature = "serde")]
     pub fn flatten(&self) -> Result<serde_json::Value, serde_json::Error> {
         let mut value = serde_json::to_value(&self.data)?;
@@ -37,6 +44,9 @@ impl MultiAgentResponseEvent {
                 serde_json::Value::String(self.agent_id.clone()),
             );
             obj.insert("role".into(), serde_json::to_value(self.role)?);
+            if let Some(call_id) = &self.call_id {
+                obj.insert("call_id".into(), serde_json::Value::String(call_id.clone()));
+            }
         }
         Ok(value)
     }
@@ -75,6 +85,7 @@ struct BridgingAgentEventSink {
     multi: Arc<dyn MultiAgentEventSink>,
     agent_id: String,
     role: AgentRole,
+    call_id: Option<String>,
 }
 
 #[async_trait]
@@ -84,6 +95,7 @@ impl AgentEventSink for BridgingAgentEventSink {
             .emit(MultiAgentResponseEvent {
                 agent_id: self.agent_id.clone(),
                 role: self.role,
+                call_id: self.call_id.clone(),
                 data,
             })
             .await;
@@ -100,6 +112,7 @@ pub(crate) fn bridge_agent_events(
         multi,
         agent_id,
         role,
+        call_id: None,
     })
 }
 
@@ -108,6 +121,7 @@ pub(crate) struct CollectingAgentEventSink {
     multi: Arc<dyn MultiAgentEventSink>,
     agent_id: String,
     role: AgentRole,
+    call_id: Option<String>,
     reducer: Mutex<SubAgentResultReducer>,
 }
 
@@ -116,11 +130,13 @@ impl CollectingAgentEventSink {
         multi: Arc<dyn MultiAgentEventSink>,
         agent_id: String,
         role: AgentRole,
+        call_id: Option<String>,
     ) -> Arc<Self> {
         Arc::new(Self {
             multi,
             agent_id,
             role,
+            call_id,
             reducer: Mutex::new(SubAgentResultReducer::new()),
         })
     }
@@ -145,6 +161,7 @@ impl AgentEventSink for CollectingAgentEventSink {
             .emit(MultiAgentResponseEvent {
                 agent_id: self.agent_id.clone(),
                 role: self.role,
+                call_id: self.call_id.clone(),
                 data,
             })
             .await;

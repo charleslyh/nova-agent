@@ -175,7 +175,7 @@ where
         T::NAME
     }
 
-    async fn call(&self, call_id: &str, args: Value, responder: &dyn ToolCallResponder) -> Result<(), MorayError> {
+    async fn call(&self, _call_id: &str, args: Value, responder: &dyn ToolCallResponder) -> Result<(), MorayError> {
         let tool_name = T::NAME;
         tracing::info!(
             "[tool] {} args={}",
