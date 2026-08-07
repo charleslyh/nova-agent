@@ -3,6 +3,7 @@ use moray_core::{MorayError, ToolCallResponder, TypedTool};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 use super::util::image_sanitize::sanitize_image_api_response;
 
@@ -30,6 +31,7 @@ impl TypedTool for ImageCreateTool {
         &self,
         args: ImageCreateArgs,
         responder: &dyn ToolCallResponder,
+        _cancellation: CancellationToken,
     ) -> Result<(), MorayError> {
         let query = args.query.trim();
         if query.is_empty() {

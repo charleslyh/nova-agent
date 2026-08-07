@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use moray_core::{MorayError, ToolCallResponder, TypedTool};
 
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 
 pub struct CalcTool;
 
@@ -19,6 +20,7 @@ impl TypedTool for CalcTool {
         &self,
         args: CalcArgs,
         responder: &dyn ToolCallResponder,
+        _cancellation: CancellationToken,
     ) -> Result<(), MorayError> {
         let payload = match eval_expr(&args.expression) {
             Ok(value) => serde_json::json!({ "value": value }),

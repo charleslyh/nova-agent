@@ -271,16 +271,16 @@ async fn react_once(
 
     let (nb_tool_calls, ingest_messages) = if let Some(group) = tool_call_group.take() {
         let end_result = toolbox.end_group(group).await;
-        if let Some(kind) = loop_exit {
-            debug!(?kind, "react_once exiting early with pending tool group");
-            let _ = end_result;
-            return Err(kind);
-        }
-        let (tool_call_requests, tool_call_results) = end_result.map_err(toolbox_err)?;
-
-        if cancellation.is_cancelled() {
-            return Err(AgentFinishKind::Canceled);
-        }
+        let (tool_call_requests, tool_call_results) = match end_result {
+            Ok(v) => v,
+            Err(e) => {
+                if let Some(kind) = loop_exit {
+                    debug!(?kind, "react_once exiting early with pending tool group");
+                    return Err(kind);
+                }
+                return Err(toolbox_err(e));
+            }
+        };
 
         let nb_tool_calls = tool_call_requests.len();
         info!(nb_tool_calls, "collected tool calls");
@@ -298,10 +298,6 @@ async fn react_once(
 
         (nb_tool_calls, ingest_messages)
     } else {
-        if let Some(kind) = loop_exit {
-            return Err(kind);
-        }
-
         (0, vec![ChatCompletionRequestMessage::Assistant {
             content: acc_text,
             tool_calls: None,
@@ -313,6 +309,18 @@ async fn react_once(
         return Err(AgentFinishKind::Failed {
             reason: e.to_string(),
         });
+    }
+
+    // After ingesting the assistant message (and tool results, if any) so the
+    // model can see the turn's final output — including a canceled tool's
+    // final message — in the next turn, honor a pending cancellation / loop
+    // exit. This is the single exit point for loop_exit: both the
+    // tool-call-group path and the no-tool-call path funnel through here.
+    if let Some(kind) = loop_exit {
+        return Err(kind);
+    }
+    if cancellation.is_cancelled() {
+        return Err(AgentFinishKind::Canceled);
     }
 
     if nb_tool_calls > 0 {

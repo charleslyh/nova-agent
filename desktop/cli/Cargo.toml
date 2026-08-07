@@ -20,6 +20,7 @@ moray-core.workspace = true
 moray-sonda.workspace = true
 serde_json = "1.0.140"
 tokio = { version = "1.44.2", features = ["macros", "rt-multi-thread"] }
+tokio-util = "0.7"
 
 [dev-dependencies]
 async-trait = "0.1.88"

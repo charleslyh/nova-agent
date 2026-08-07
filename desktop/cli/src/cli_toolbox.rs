@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use moray_core::{MorayError, Tool, ToolCallResponder, ToolManifest};
 use moray_sonda::SondaToolCatalog;
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
 /// Writes model-visible tool output to stdout as it arrives.
 struct PrintingResponder;
@@ -104,7 +105,8 @@ impl CliToolbox {
         let Some(tool) = self.tools.get(name) else {
             return Err(MorayError::Message(format!("unknown tool {name}")));
         };
-        tool.call("cli", arguments, &PrintingResponder).await
+        tool.call("cli", arguments, &PrintingResponder, CancellationToken::new())
+            .await
     }
 }
 
@@ -114,6 +116,7 @@ mod tests {
     use moray_core::{ToolCallResponder, TypedTool};
     use moray_sonda::SondaToolCatalog;
     use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
 
     use super::CliToolbox;
 
@@ -141,6 +144,7 @@ parameters = '{}'
             &self,
             _: serde_json::Value,
             responder: &dyn ToolCallResponder,
+            _cancellation: CancellationToken,
         ) -> Result<(), moray_core::MorayError> {
             let _ = responder.send_text("beta".into()).await;
             Ok(())
@@ -156,6 +160,7 @@ parameters = '{}'
             &self,
             _: serde_json::Value,
             responder: &dyn ToolCallResponder,
+            _cancellation: CancellationToken,
         ) -> Result<(), moray_core::MorayError> {
             let _ = responder.send_text("alpha".into()).await;
             Ok(())
@@ -171,6 +176,7 @@ parameters = '{}'
             &self,
             _: serde_json::Value,
             responder: &dyn ToolCallResponder,
+            _cancellation: CancellationToken,
         ) -> Result<(), moray_core::MorayError> {
             let _ = responder.send_text("gamma".into()).await;
             Ok(())

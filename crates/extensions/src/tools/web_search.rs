@@ -3,6 +3,7 @@ use moray_core::{MorayError, ToolCallResponder, TypedTool};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 const API_URL: &str = "http://21.215.220.113:443/text_search";
 
@@ -22,6 +23,7 @@ impl TypedTool for WebSearchTool {
         &self,
         args: WebSearchArgs,
         responder: &dyn ToolCallResponder,
+        _cancellation: CancellationToken,
     ) -> Result<(), MorayError> {
         let query = args.query.trim();
         if query.is_empty() {

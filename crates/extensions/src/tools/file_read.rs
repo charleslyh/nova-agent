@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use moray_core::{MorayError, ToolCallResponder, TypedTool};
 use serde::Deserialize;
+use tokio_util::sync::CancellationToken;
 
 use super::util::path::resolve_path;
 
@@ -32,6 +33,7 @@ impl TypedTool for FileReadTool {
         &self,
         args: FileReadArgs,
         responder: &dyn ToolCallResponder,
+        _cancellation: CancellationToken,
     ) -> Result<(), MorayError> {
         let path = resolve_path(&self.cwd, &args.path);
         let content = tokio::fs::read_to_string(&path)

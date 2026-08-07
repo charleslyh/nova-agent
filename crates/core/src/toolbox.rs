@@ -148,8 +148,18 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// Execute the tool. Model-visible output goes through [`ToolCallResponder`]; lifecycle events
-    /// (`Requested`, `Started`, `Finished`) are emitted only by [`Toolbox`].
-    async fn call(&self, call_id: &str, args: Value, responder: &dyn ToolCallResponder) -> Result<(), MorayError>;
+    /// (`Requested`, `Started`, `Finished`) are emitted only by [`Toolbox`]. The `cancellation`
+    /// token lets the tool observe turn-level cancellation cooperatively: a tool that wants to
+    /// emit a final message on cancel should `select!` on `cancellation.cancelled()` and
+    /// `send_text` before returning. [`run_call`] does not race the tool future with the token,
+    /// so the tool always observes the token and decides how to respond.
+    async fn call(
+        &self,
+        call_id: &str,
+        args: Value,
+        responder: &dyn ToolCallResponder,
+        cancellation: CancellationToken,
+    ) -> Result<(), MorayError>;
 }
 
 /// Typed tool: per-tool [`Args`](Self::Args) + [`run`](Self::run). Metadata (description, JSON schema) comes from the app-layer tool catalog.
@@ -159,10 +169,17 @@ pub trait TypedTool: Send + Sync {
     const NAME: &'static str;
 
     /// Emit model-visible output via `responder` (supports streaming); return only on failure.
+    /// The `cancellation` token lets the tool observe turn-level cancellation; a tool that
+    /// wants to emit a final message on cancel should `select!` on `cancellation.cancelled()`.
+    /// [`Toolbox::run_call`] calls this directly without an outer `select!`, so the tool is
+    /// always responsible for observing the token — there is no hard-drop fallback inside
+    /// `run_call`. (The group-level [`ToolCallGroup::join`] still aborts the spawned task
+    /// if the whole group is cancelled and the tool has not returned yet.)
     async fn run(
-      &self,
-      args: Self::Args,
+        &self,
+        args: Self::Args,
         responder: &dyn ToolCallResponder,
+        cancellation: CancellationToken,
     ) -> Result<(), MorayError>;
 }
 
@@ -175,7 +192,13 @@ where
         T::NAME
     }
 
-    async fn call(&self, _call_id: &str, args: Value, responder: &dyn ToolCallResponder) -> Result<(), MorayError> {
+    async fn call(
+        &self,
+        _call_id: &str,
+        args: Value,
+        responder: &dyn ToolCallResponder,
+        cancellation: CancellationToken,
+    ) -> Result<(), MorayError> {
         let tool_name = T::NAME;
         tracing::info!(
             "[tool] {} args={}",
@@ -186,7 +209,7 @@ where
             MorayError::Message(format!("{tool_name}: invalid JSON arguments: {e}"))
         })?;
         let result = self
-            .run(args, responder)
+            .run(args, responder, cancellation)
             .await
             .map_err(|e| MorayError::Message(format!("{tool_name}: {e}")));
         tracing::info!("[tool] {} result={:?}", tool_name, result);
@@ -482,19 +505,25 @@ async fn run_call(
         return;
     }
 
-    let status = match tokio::select! {
-        _ = cancellation.cancelled() => {
-            finish_canceled(&tracker).await;
-            return;
+    // Cooperative cancellation: call the tool directly with the token. The tool is
+    // responsible for observing `cancellation.cancelled()` and emitting any final
+    // model-visible message via `send_text` before returning `Ok(())`. We do NOT race
+    // the tool future with the token here, so the tool's cancel-time output is never
+    // dropped. After the tool returns, we check the token to decide the final status:
+    // a tool that observed cancellation should report `Canceled` (not `Success`) so
+    // downstream consumers (frontend, session log) mark it correctly.
+    let cancel_check = cancellation.clone();
+    let status = match tool.call(&call_id, arguments, tracker.as_ref(), cancellation).await {
+        Ok(()) => {
+            if cancel_check.is_cancelled() {
+                ToolCallStatus::Canceled
+            } else {
+                ToolCallStatus::Success
+            }
         }
-        res = tool.call(&call_id, arguments, tracker.as_ref()) => res,
-    } {
-        Ok(()) => ToolCallStatus::Success,
         Err(e) => {
             warn!(call_id = %call_id, tool = %name, error = %e, "tool call failed");
-            let _ = tracker
-                .send_text(format!("tool error: {e}"))
-                .await;
+            let _ = tracker.send_text(format!("tool error: {e}")).await;
             ToolCallStatus::Error
         }
     };
@@ -803,6 +832,7 @@ mod tests {
             &self,
             args: Value,
             responder: &dyn ToolCallResponder,
+            _cancellation: CancellationToken,
         ) -> Result<(), MorayError> {
             responder
                 .send_text(format!(
@@ -825,6 +855,7 @@ mod tests {
             &self,
             _: Value,
             _responder: &dyn ToolCallResponder,
+            _cancellation: CancellationToken,
         ) -> Result<(), MorayError> {
             std::future::pending::<()>().await;
             unreachable!()
@@ -842,6 +873,7 @@ mod tests {
             &self,
             _: Value,
             _responder: &dyn ToolCallResponder,
+            _cancellation: CancellationToken,
         ) -> Result<(), MorayError> {
             Err(MorayError::Message("boom".into()))
         }

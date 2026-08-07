@@ -8,6 +8,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
+use tokio_util::sync::CancellationToken;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const READ_CHUNK_SIZE: usize = 8192;
@@ -41,6 +42,7 @@ impl TypedTool for ShellTool {
         &self,
         args: ShellArgs,
         responder: &dyn ToolCallResponder,
+        _cancellation: CancellationToken,
     ) -> Result<(), MorayError> {
         let command = args.command.trim();
         if command.is_empty() {

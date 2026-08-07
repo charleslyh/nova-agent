@@ -107,6 +107,7 @@ impl Tool for RunSubAgentTool {
         call_id: &str,
         args: Value,
         responder: &dyn ToolCallResponder,
+        _cancellation: CancellationToken,
     ) -> std::result::Result<(), MorayError> {
         let args: RunSubAgentArgs = serde_json::from_value(args).map_err(|e| {
             MorayError::Message(format!("invalid run_sub_agent arguments: {e}"))

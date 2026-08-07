@@ -4,6 +4,7 @@ use reqwest::header::CONTENT_TYPE;
 use moray_core::{MorayError, ToolCallResponder, TypedTool};
 use serde::Deserialize;
 use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 pub struct WebFetchTool;
 
@@ -31,6 +32,7 @@ impl TypedTool for WebFetchTool {
         &self,
         args: WebFetchArgs,
         responder: &dyn ToolCallResponder,
+        _cancellation: CancellationToken,
     ) -> Result<(), MorayError> {
         let url = reqwest::Url::parse(args.url.trim())
             .map_err(|e| MorayError::Message(format!("web_fetch: invalid URL: {e}")))?;
