@@ -171,11 +171,14 @@ impl RunSubAgentTool {
 
         let toolbox = Arc::new(self.factory.create_toolbox(agent_id)?);
 
+        let formatter = self.factory.create_result_formatter(agent_id);
+
         let collector = CollectingAgentEventSink::new(
             self.events.clone(),
             agent_id.to_string(),
             AgentRole::Sub,
             Some(call_id.to_string()),
+            formatter,
         );
 
         let mut request = AgentRequestBuilder::new()

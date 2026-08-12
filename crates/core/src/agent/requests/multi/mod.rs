@@ -1,8 +1,10 @@
+mod formatter;
 mod harness;
 mod request;
 mod sink;
 mod trigger;
 
+pub use formatter::{AgentResultFormatter, SubAgentRunData, ToolCallRecord};
 pub use harness::AgentHarnessFactory;
 pub use request::MultiAgentsRequestBuilder;
 pub use sink::{

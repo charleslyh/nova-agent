@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use moray_core::{
-    AgentHarnessFactory, ChatCompletion, ChatCompletionRequestMessage, ContextEngine, MorayError,
-    Toolbox,
+    AgentHarnessFactory, AgentResultFormatter, ChatCompletion, ChatCompletionRequestMessage,
+    ContextEngine, MorayError, Toolbox,
 };
 
 use crate::completion_factory::SondaCompletionFactory;
@@ -52,5 +52,12 @@ impl AgentHarnessFactory for SondaAgentHarnessFactory {
         messages: Vec<ChatCompletionRequestMessage>,
     ) -> std::result::Result<Arc<dyn ContextEngine>, MorayError> {
         self.context_factory.create_context(agent_id, messages)
+    }
+
+    fn create_result_formatter(
+        &self,
+        _agent_id: &str,
+    ) -> Option<Arc<dyn AgentResultFormatter>> {
+        None
     }
 }

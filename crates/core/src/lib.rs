@@ -9,9 +9,9 @@ mod types;
 
 pub use agent::{
     AgentEventSink, AgentFinishKind, AgentHarnessFactory, AgentRequestBuilder,
-    AgentResponseEvent, AgentRole, ChannelMultiAgentEventSink, MultiAgentEventSink,
-    MultiAgentResponseEvent, MultiAgentsRequestBuilder, SubAgentContextMode, SubAgentSpec,
-    RUN_SUB_AGENT_TOOL_NAME,
+    AgentResponseEvent, AgentResultFormatter, AgentRole, ChannelMultiAgentEventSink,
+    MultiAgentEventSink, MultiAgentResponseEvent, MultiAgentsRequestBuilder, SubAgentContextMode,
+    SubAgentRunData, SubAgentSpec, ToolCallRecord, RUN_SUB_AGENT_TOOL_NAME,
 };
 pub use completion::{
     ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,

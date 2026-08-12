@@ -5,9 +5,9 @@ mod requests;
 mod types;
 
 pub use requests::multi::{
-    AgentHarnessFactory, AgentRole, ChannelMultiAgentEventSink, MultiAgentEventSink,
-    MultiAgentResponseEvent, MultiAgentsRequestBuilder, SubAgentContextMode, SubAgentSpec,
-    RUN_SUB_AGENT_TOOL_NAME,
+    AgentHarnessFactory, AgentResultFormatter, AgentRole, ChannelMultiAgentEventSink,
+    MultiAgentEventSink, MultiAgentResponseEvent, MultiAgentsRequestBuilder, SubAgentContextMode,
+    SubAgentRunData, SubAgentSpec, ToolCallRecord, RUN_SUB_AGENT_TOOL_NAME,
 };
 pub use requests::single::{AgentEventSink, AgentRequestBuilder};
 pub use types::{AgentFinishKind, AgentResponseEvent};
