@@ -12,8 +12,8 @@ use crate::completion::{
     ChatCompletionResponseChunk,
 };
 use crate::context::ContextEngine;
-use crate::toolbox::{ToolCallEvent, ToolCallEventSink, ToolCallGroupId, Toolbox};
-use crate::types::ToolManifest;
+use crate::toolbox::{ToolCallEvent, ToolCallEventSink, ToolCallGroupId, Toolbox, ToolboxError};
+use crate::types::{ToolCallRequest, ToolCallStatus, ToolManifest};
 
 /// Prompt injected as a User message when the agent exceeds its configured
 /// round limit. Instructs the LLM to produce a text-only summary without
@@ -149,6 +149,35 @@ fn toolbox_err(kind: impl std::fmt::Display) -> AgentFinishKind {
     }
 }
 
+/// Emit the complete event sequence for a call that failed before the toolbox
+/// could start it (e.g. an unknown tool). The toolbox only emits events for
+/// calls it accepted, so without this the failure exists only at the turn
+/// level: consumers match a call's events by `call_id`, and a pending entry
+/// that never sees `Finished` stays pending forever.
+async fn emit_unstarted_call_events(
+    sink: &Arc<dyn AgentEventSink>,
+    tool_call: &ToolCallRequest,
+    error: &ToolboxError,
+) {
+    let sink = AgentToolCallEventSink { sink: sink.clone() };
+    let call_id = tool_call.call_id.clone();
+    let _ = sink
+        .emit(ToolCallEvent::requested(
+            call_id.clone(),
+            tool_call.name.clone(),
+            tool_call.arguments.clone(),
+        ))
+        .await;
+    // The reason rides as payload so it renders on the call's own surface,
+    // not only in the turn-level failure.
+    let _ = sink
+        .emit(ToolCallEvent::payload(call_id.clone(), error.to_string()))
+        .await;
+    let _ = sink
+        .emit(ToolCallEvent::finished(call_id, ToolCallStatus::Error))
+        .await;
+}
+
 async fn react_once(
     context: &Arc<dyn ContextEngine>,
     tools: &[ToolManifest],
@@ -244,6 +273,7 @@ async fn react_once(
                         error = %e,
                         "tool call failed"
                     );
+                    emit_unstarted_call_events(sink, &tool_call, &e).await;
                     loop_exit = Some(toolbox_err(e));
                     break 'completion;
                 }
@@ -329,4 +359,135 @@ async fn react_once(
         debug!("finished without tool calls");
     }
     Ok(nb_tool_calls)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::toolbox::{ToolCallEventKind, ToolboxBuilder};
+    use crate::types::MorayError;
+    use futures::{stream, Stream};
+    use std::pin::Pin;
+    use std::sync::Mutex;
+
+    struct NoopContext;
+
+    #[async_trait]
+    impl ContextEngine for NoopContext {
+        async fn setup(&self, _tools: &[ToolManifest]) -> Result<(), MorayError> {
+            Ok(())
+        }
+        async fn assemble(
+            &self,
+            _tools: &[ToolManifest],
+        ) -> Result<Vec<ChatCompletionRequestMessage>, MorayError> {
+            Ok(Vec::new())
+        }
+        async fn ingest(
+            &self,
+            _messages: Vec<ChatCompletionRequestMessage>,
+        ) -> Result<(), MorayError> {
+            Ok(())
+        }
+        async fn teardown(&self) -> Result<(), MorayError> {
+            Ok(())
+        }
+        async fn clear(&self) -> Result<(), MorayError> {
+            Ok(())
+        }
+    }
+
+    /// One round: the model calls a tool the toolbox does not have, then stops.
+    struct HallucinatedToolCall;
+
+    #[async_trait]
+    impl ChatCompletion for HallucinatedToolCall {
+        async fn completion(
+            &self,
+            _messages: &[ChatCompletionRequestMessage],
+            _tools: &[ToolManifest],
+            _stream: bool,
+        ) -> Result<
+            Pin<Box<dyn Stream<Item = Result<ChatCompletionResponseChunk, MorayError>> + Send>>,
+            MorayError,
+        > {
+            let chunks = vec![
+                Ok(ChatCompletionResponseChunk::ToolCall(ToolCallRequest {
+                    call_id: "c-hallucinated".into(),
+                    name: "image_create".into(),
+                    arguments: serde_json::json!({}),
+                })),
+                Ok(ChatCompletionResponseChunk::Done {
+                    reason: ChatCompletionFinishReason::Stop,
+                    usage: None,
+                }),
+            ];
+            Ok(Box::pin(stream::iter(chunks)))
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingSink(Mutex<Vec<AgentResponseEvent>>);
+
+    #[async_trait]
+    impl AgentEventSink for RecordingSink {
+        async fn emit(&self, event: AgentResponseEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    /// A call that fails before the toolbox accepts it must still produce the
+    /// full event sequence under its `call_id`: consumers match call events by
+    /// id, so a pending entry that never sees `Finished` stays pending forever.
+    #[tokio::test]
+    async fn unstarted_call_emits_terminal_events() {
+        let sink = Arc::new(RecordingSink::default());
+        let toolbox = Arc::new(ToolboxBuilder::new().build()); // no tools
+        let cancellation = CancellationToken::new();
+
+        let context: Arc<dyn ContextEngine> = Arc::new(NoopContext);
+        let completion: Arc<dyn ChatCompletion> = Arc::new(HallucinatedToolCall);
+        let result = react_once(
+            &context,
+            &[],
+            &completion,
+            false,
+            &toolbox,
+            &cancellation,
+            &(sink.clone() as Arc<dyn AgentEventSink>),
+        )
+        .await;
+
+        let err = result.expect_err("the turn fails with the toolbox error");
+        assert!(
+            matches!(err, AgentFinishKind::Failed { ref reason } if reason.contains("unknown tool")),
+            "unexpected exit: {err:?}"
+        );
+
+        let events = sink.0.lock().unwrap();
+        let kinds: Vec<&ToolCallEventKind> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentResponseEvent::ToolCall { event } if event.call_id == "c-hallucinated" => {
+                    Some(&event.kind)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kinds.len(), 3, "requested + payload + finished, got {kinds:?}");
+        assert!(matches!(
+            &kinds[0],
+            ToolCallEventKind::Requested { name, .. } if name == "image_create"
+        ));
+        assert!(
+            matches!(&kinds[1], ToolCallEventKind::Payload { text } if text.contains("unknown tool")),
+            "the failure reason rides the payload so the call's own surface shows it"
+        );
+        assert!(matches!(
+            &kinds[2],
+            ToolCallEventKind::Finished {
+                status: ToolCallStatus::Error
+            }
+        ));
+    }
 }
