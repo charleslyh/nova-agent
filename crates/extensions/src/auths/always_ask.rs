@@ -4,10 +4,20 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use moray_core::{ToolCallAuthError, ToolCallAuthorizer, ToolCallResponder};
-use serde_json::{json, Value};
+use moray_channels::{ChannelError, ToolCallReplyRouter};
+use moray_core::{ToolCallInterceptor, ToolCallRequest, ToolCallResponder, ToolManifest};
+use serde_json::{Value, json};
 use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 
+/// Prompts the user before every tool call and waits for an approval
+/// decision, except for tools in the auto-allow list.
+///
+/// The prompt is emitted through the interceptor's responder (the toolbox
+/// buffers it and flushes after `Requested`), and decisions arrive out-of-band
+/// through [`ToolCallReplyRouter::reply`] (IM channels or the desktop HTTP
+/// route). Denials carry no custom payload, so the toolbox appends its default
+/// denial text.
 pub struct AlwaysAsking {
     pending_auth: Mutex<HashMap<String, oneshot::Sender<bool>>>,
     auto_allow: HashSet<String>,
@@ -49,15 +59,15 @@ fn decode_allow(data: &Value) -> bool {
 }
 
 #[async_trait]
-impl ToolCallAuthorizer for AlwaysAsking {
-    async fn request(
+impl ToolCallInterceptor for AlwaysAsking {
+    async fn intercept(
         &self,
-        call_id: &str,
-        tool_name: &str,
-        args: &Value,
+        request: &mut ToolCallRequest,
+        _manifest: Option<&ToolManifest>,
         responder: Arc<dyn ToolCallResponder>,
+        _cancellation: CancellationToken,
     ) -> bool {
-        if self.auto_allow.contains(tool_name) {
+        if self.auto_allow.contains(request.name.as_str()) {
             return true;
         }
 
@@ -65,11 +75,11 @@ impl ToolCallAuthorizer for AlwaysAsking {
         self.pending_auth
             .lock()
             .expect("always-ask pending-auth mutex poisoned")
-            .insert(call_id.to_string(), tx);
+            .insert(request.call_id.clone(), tx);
         if responder
             .send_extra(json!({
-                "tool_name": tool_name,
-                "arguments": args,
+                "tool_name": request.name,
+                "arguments": request.arguments,
             }))
             .await
             .is_err()
@@ -77,21 +87,22 @@ impl ToolCallAuthorizer for AlwaysAsking {
             self.pending_auth
                 .lock()
                 .expect("always-ask pending-auth mutex poisoned")
-                .remove(call_id);
+                .remove(&request.call_id);
             return false;
         }
         rx.await.unwrap_or(false)
     }
+}
 
-    async fn reply(&self, call_id: &str, data: Value) -> Result<(), ToolCallAuthError> {
+#[async_trait]
+impl ToolCallReplyRouter for AlwaysAsking {
+    async fn reply(&self, call_id: &str, data: Value) -> Result<(), ChannelError> {
         let tx = self
             .pending_auth
             .lock()
             .expect("always-ask pending-auth mutex poisoned")
             .remove(call_id)
-            .ok_or_else(|| ToolCallAuthError::NoPendingAuthorization {
-                call_id: call_id.to_string(),
-            })?;
+            .ok_or_else(|| ChannelError::ToolCallAuthNotFound(call_id.to_string()))?;
         let _ = tx.send(decode_allow(&data));
         Ok(())
     }

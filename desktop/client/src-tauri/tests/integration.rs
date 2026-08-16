@@ -398,13 +398,13 @@ async fn tool_auth_reply_without_pending_call_errors() {
     let sonda = build_test_sonda().await;
 
     let err = sonda
-        .authorizer
+        .auth_resolver
         .reply("call-1", serde_json::json!(true))
         .await
         .expect_err("reply without pending call should fail");
     let msg = err.to_string();
     assert!(
-        msg.contains("no pending tool authorization"),
+        msg.contains("no pending authorization"),
         "unexpected error: {msg}"
     );
 

@@ -227,6 +227,7 @@ parameters = '{}'
                 &self,
                 _: serde_json::Value,
                 responder: &dyn ToolCallResponder,
+                _cancellation: CancellationToken,
             ) -> Result<(), moray_core::MorayError> {
                 let _ = responder.send_text("ok".into()).await;
                 Ok(())

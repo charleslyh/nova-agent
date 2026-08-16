@@ -115,6 +115,7 @@ mod tests {
                     aspect_ratio: "1:1".into(),
                 },
                 &NoopResponder,
+                CancellationToken::new(),
             )
             .await
             .expect_err("empty query");

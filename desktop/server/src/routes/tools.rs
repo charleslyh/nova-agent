@@ -40,7 +40,7 @@ async fn tools_reply_auth(
     Path(call_id): Path<String>,
     Json(data): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let result = sonda.authorizer.reply(&call_id, data).await;
+    let result = sonda.auth_resolver.reply(&call_id, data).await;
 
     match result {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),

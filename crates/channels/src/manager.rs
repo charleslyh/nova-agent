@@ -4,10 +4,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 use dashmap::DashMap;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
-use moray_core::ToolCallAuthorizer;
 use moray_session::{LiveSessions, SessionEvent, SessionEventKind, TurnInput};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -16,6 +16,20 @@ use tracing::{info, warn};
 
 use crate::channel::{ApprovalDecision, ImChannel, InboundMessage};
 use crate::error::{ChannelError, SessionLiveEventsError};
+
+/// Routes an out-of-band tool-call approval reply to whichever component is
+/// waiting for it (e.g. a `ToolCallInterceptor` holding a pending prompt).
+///
+/// moray-core deliberately knows nothing about reply routing: the toolbox
+/// only exposes the interception hook, and applications decide how user
+/// decisions reach a waiting interceptor. IM channels and HTTP routes share
+/// this small trait to deliver those decisions.
+#[async_trait]
+pub trait ToolCallReplyRouter: Send + Sync {
+    /// Delivers a user decision for `call_id`. Returns
+    /// [`ChannelError::ToolCallAuthNotFound`] when no waiter is registered.
+    async fn reply(&self, call_id: &str, data: serde_json::Value) -> Result<(), ChannelError>;
+}
 
 /// Full metadata required to run an IM channel connector.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -91,7 +105,7 @@ async fn drain_transcript(channel_id: &str, transcript: JoinHandle<()>) {
 
 pub struct ChannelsManager {
     live_events: Arc<dyn SessionLiveEvents>,
-    authorizer: Arc<dyn ToolCallAuthorizer>,
+    auth_replies: Arc<dyn ToolCallReplyRouter>,
     live_sessions: LiveSessions,
     factories: HashMap<String, ChannelFactoryFn>,
     running: DashMap<String, RunningChannel>,
@@ -100,13 +114,13 @@ pub struct ChannelsManager {
 impl ChannelsManager {
     pub fn new(
         live_events: Arc<dyn SessionLiveEvents>,
-        authorizer: Arc<dyn ToolCallAuthorizer>,
+        auth_replies: Arc<dyn ToolCallReplyRouter>,
         live_sessions: LiveSessions,
         factories: HashMap<String, ChannelFactoryFn>,
     ) -> Self {
         Self {
             live_events,
-            authorizer,
+            auth_replies,
             live_sessions,
             factories,
             running: DashMap::new(),
@@ -142,7 +156,7 @@ impl ChannelsManager {
 
         let cancel = CancellationToken::new();
         let live_events = self.live_events.clone();
-        let authorizer = self.authorizer.clone();
+        let auth_replies = self.auth_replies.clone();
         let live_sessions = self.live_sessions.clone();
         let run_cancel = cancel.clone();
 
@@ -208,7 +222,7 @@ impl ChannelsManager {
                             Some(inbound) => {
                                 let dispatch = dispatch_inbound(
                                     &live_sessions,
-                                    &authorizer,
+                                    &auth_replies,
                                     &session_id,
                                     inbound,
                                 );
@@ -324,7 +338,7 @@ fn parse_channel_slash_command(msg: &str) -> Option<ChannelSlashCommand> {
 
 async fn dispatch_inbound(
     live_sessions: &LiveSessions,
-    authorizer: &Arc<dyn moray_core::ToolCallAuthorizer>,
+    auth_replies: &Arc<dyn ToolCallReplyRouter>,
     session_id: &str,
     msg: InboundMessage,
 ) -> Result<(), String> {
@@ -346,13 +360,13 @@ async fn dispatch_inbound(
                 .map_err(|e| e.to_string())
         }
         InboundMessage::Auth(auth) => {
-            reply_tool_auth(authorizer, &auth.call_id, auth.decision).await
+            reply_tool_auth(auth_replies, &auth.call_id, auth.decision).await
         }
     }
 }
 
 async fn reply_tool_auth(
-    authorizer: &Arc<dyn moray_core::ToolCallAuthorizer>,
+    auth_replies: &Arc<dyn ToolCallReplyRouter>,
     call_id: &str,
     decision: ApprovalDecision,
 ) -> Result<(), String> {
@@ -362,7 +376,7 @@ async fn reply_tool_auth(
             ApprovalDecision::Deny => "deny",
         }
     });
-    authorizer
+    auth_replies
         .reply(call_id, payload)
         .await
         .map_err(|e| e.to_string())

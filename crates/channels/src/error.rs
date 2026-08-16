@@ -28,6 +28,10 @@ pub enum ChannelError {
 
     #[error("max reconnect attempts ({limit}) exceeded")]
     MaxReconnect { limit: u32 },
+
+    /// No pending tool-call authorization entry exists for the given call id.
+    #[error("no pending authorization for tool call `{0}`")]
+    ToolCallAuthNotFound(String),
 }
 
 impl ChannelError {

@@ -125,6 +125,7 @@ mod tests {
                     image_uri: "https://example.com/img.png".into(),
                 },
                 &NoopResponder,
+                CancellationToken::new(),
             )
             .await
             .expect_err("empty prompt");
@@ -141,6 +142,7 @@ mod tests {
                     image_uri: "  ".into(),
                 },
                 &NoopResponder,
+                CancellationToken::new(),
             )
             .await
             .expect_err("empty image_uri");

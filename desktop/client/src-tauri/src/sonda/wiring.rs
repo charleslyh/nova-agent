@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use moray_core::{ChatCompletion, ContextEngine, ToolCallAuthorizer};
+use moray_core::{ChatCompletion, ContextEngine};
 use moray_extensions::auths::AlwaysAsking;
 use moray_extensions::completions::{Endpoint, OpenAIChatCompletion};
 use moray_extensions::context::CompositeContextEngineBuilder;
@@ -25,7 +25,10 @@ pub fn completion_registrations() -> Vec<SondaCompletionRegistration> {
     vec![SondaCompletionRegistration::new("openai", build_openai_completion)]
 }
 
-pub fn authorizer() -> Arc<dyn ToolCallAuthorizer> {
+/// The shared always-ask approval hook: injected into every toolbox as a
+/// [`moray_core::ToolCallInterceptor`] and exposed through
+/// [`moray_channels::ToolCallReplyRouter`] for approval replies.
+pub fn always_asking() -> Arc<AlwaysAsking> {
     Arc::new(AlwaysAsking::with_auto_allow([RUN_SUB_AGENT_TOOL_NAME]))
 }
 

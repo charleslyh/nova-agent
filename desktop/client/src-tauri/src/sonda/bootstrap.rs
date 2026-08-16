@@ -189,10 +189,13 @@ pub fn build_sonda(
     let session_transcripts = Arc::new(SondaSessionTranscripts::new(&paths.sessions_dir));
     let tool_catalog = SondaToolCatalog::open(&paths.tools_catalog_path)?;
 
+    let always_asking = wiring::always_asking();
+
     SondaBuilder::new()
         .settings(settings_store.clone())
         .completion_registrations(wiring::completion_registrations())
-        .authorizer(wiring::authorizer())
+        .auth_resolver(always_asking.clone())
+        .tool_call_interceptor(always_asking)
         .context_builder(wiring::context_builder(
             settings_store,
             skills.clone(),

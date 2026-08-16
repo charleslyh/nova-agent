@@ -34,7 +34,7 @@ pub const TOOL_CALL_DENIED_BY_USER: &str = "This tool call was denied by the use
 /// Shown in the tool result when the turn or tool-call group is canceled.
 pub const TOOL_CALL_CANCELED: &str = "This tool call was canceled.";
 
-/// Errors from [`Toolbox`], [`ToolCallAuthorizer::reply`], and related flows.
+/// Errors from [`Toolbox`] and related flows.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ToolboxError {
     #[error("unknown tool {name}")]
@@ -42,9 +42,6 @@ pub enum ToolboxError {
 
     #[error("unknown tool call group {group_id}")]
     UnknownGroup { group_id: u64 },
-
-    #[error("no pending tool authorization for call_id {call_id}")]
-    NoPendingAuthorization { call_id: String },
 
     /// [`ToolCallEventSink::emit`] rejected the event (agent stream closed or backpressure).
     #[error("tool call event sink closed")]
@@ -54,9 +51,6 @@ pub enum ToolboxError {
     #[error("failed to deliver tool call output: {reason}")]
     DeliverFailed { reason: String },
 }
-
-/// Authorization failures from [`ToolCallAuthorizer::reply`] (subset of [`ToolboxError`]).
-pub type ToolCallAuthError = ToolboxError;
 
 impl From<ToolboxError> for MorayError {
     fn from(value: ToolboxError) -> Self {
@@ -231,24 +225,72 @@ pub trait ToolCallResponder: Send + Sync {
     async fn send_text(&self, text: String) -> Result<(), ToolboxError>;
 }
 
-/// Optional gate before tool execution within a [`ToolCallGroup`].
+/// Generic pre-execution hook invoked inside `run_call` after the call is
+/// registered with its tracker and before the `Requested` event is emitted.
+///
+/// Interceptors receive the full call context and decide their own behavior:
+/// they MAY rewrite `request.arguments` in place (augment, modify or redirect
+/// arguments; `call_id` and `name` changes are reverted by the toolbox), MAY
+/// emit out-of-band events through `responder` (buffered by the toolbox and
+/// flushed after `Requested` is emitted, so the wire contract of "Requested
+/// first" always holds), and MAY block waiting for external input while
+/// cooperatively responding to `cancellation`.
+///
+/// Returning `true` proceeds with the (possibly rewritten) request; returning
+/// `false` skips execution entirely: the toolbox emits `Requested` with the
+/// current request, flushes the interceptor's buffered output (appending a
+/// default denial payload when no `Payload` was buffered), and finishes the
+/// call with `Finished(Error)`. Interceptors that deny SHOULD describe the
+/// denial themselves through the responder before returning `false`.
+///
+/// Multiple interceptors are chained in registration order: each observes the
+/// rewrites of its predecessors, and the first `false` short-circuits the
+/// chain. Implementations must not fail the call themselves; unexpected
+/// internal errors should degrade to returning `true` with the request
+/// untouched.
 #[async_trait]
-pub trait ToolCallAuthorizer: Send + Sync {
-    /// Returns whether the tool call may proceed. `true` means execute the tool; `false` means
-    /// emit [`ToolCallEventKind::Finished`] with [`ToolCallStatus::Error`] and skip execution.
-    async fn request(
+pub trait ToolCallInterceptor: Send + Sync {
+    /// Intercepts a tool call before execution.
+    async fn intercept(
         &self,
-        call_id: &str,
-        tool_name: &str,
-        args: &Value,
+        request: &mut ToolCallRequest,
+        manifest: Option<&ToolManifest>,
         responder: Arc<dyn ToolCallResponder>,
+        cancellation: CancellationToken,
     ) -> bool;
+}
 
-    /// Resolves a user authorization reply for `call_id`. Override when the authorizer keeps pending state.
-    async fn reply(&self, call_id: &str, _data: Value) -> Result<(), ToolCallAuthError> {
-        Err(ToolboxError::NoPendingAuthorization {
-            call_id: call_id.to_string(),
-        })
+/// [`ToolCallResponder`] that buffers events instead of forwarding them.
+///
+/// Used by `run_call` to hold an interceptor's output until the `Requested`
+/// event has been emitted, then flushed in order.
+#[derive(Default)]
+struct BufferingToolCallResponder {
+    events: std::sync::Mutex<Vec<ToolCallEventKind>>,
+}
+
+impl BufferingToolCallResponder {
+    fn drain(&self) -> Vec<ToolCallEventKind> {
+        std::mem::take(&mut self.events.lock().unwrap())
+    }
+}
+
+#[async_trait]
+impl ToolCallResponder for BufferingToolCallResponder {
+    async fn send_extra(&self, data: Value) -> Result<(), ToolboxError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(ToolCallEventKind::Extra { data });
+        Ok(())
+    }
+
+    async fn send_text(&self, text: String) -> Result<(), ToolboxError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(ToolCallEventKind::Payload { text });
+        Ok(())
     }
 }
 
@@ -267,7 +309,9 @@ pub trait ToolCallEventSink: Send + Sync {
 /// [`ToolCallGroup`] emits `Requested` / `Started` / `Finished` via [`Self::emit`] / [`Self::finish`].
 /// Tools and authorizers interact through [`ToolCallResponder`].
 struct ToolCallTracker {
-    request: ToolCallRequest,
+    /// The request this call was (or will be) executed with. Interceptors may
+    /// rewrite it before the `Requested` event is emitted, hence the lock.
+    request: std::sync::Mutex<ToolCallRequest>,
     sink: Arc<dyn ToolCallEventSink>,
     content: Arc<Mutex<String>>,
     result: Arc<Mutex<Option<ToolCallResult>>>,
@@ -276,15 +320,40 @@ struct ToolCallTracker {
 impl ToolCallTracker {
     fn new(request: ToolCallRequest, sink: Arc<dyn ToolCallEventSink>) -> Self {
         Self {
-            request,
+            request: std::sync::Mutex::new(request),
             sink,
             content: Arc::new(Mutex::new(String::new())),
             result: Arc::new(Mutex::new(None)),
         }
     }
 
-    fn request(&self) -> &ToolCallRequest {
-        &self.request
+    fn call_id(&self) -> String {
+        self.request.lock().unwrap().call_id.clone()
+    }
+
+    fn request(&self) -> ToolCallRequest {
+        self.request.lock().unwrap().clone()
+    }
+
+    /// Replaces the tracked request after interception, keeping the original
+    /// `call_id` and `name`: only `arguments` may be rewritten, so that event
+    /// correlation and transcript ingest stay aligned with the model's own
+    /// tool call.
+    fn set_request(&self, request: ToolCallRequest) {
+        let mut guard = self.request.lock().unwrap();
+        if request.call_id != guard.call_id || request.name != guard.name {
+            warn!(
+                original_call_id = %guard.call_id,
+                original_name = %guard.name,
+                "interceptor tried to rewrite call_id/name; reverting to original"
+            );
+        }
+        let arguments = request.arguments;
+        *guard = ToolCallRequest {
+            call_id: guard.call_id.clone(),
+            name: guard.name.clone(),
+            arguments,
+        };
     }
 
     async fn take_result(&self) -> ToolCallResult {
@@ -293,7 +362,7 @@ impl ToolCallTracker {
             .await
             .take()
             .unwrap_or_else(|| ToolCallResult {
-                call_id: self.request.call_id.clone(),
+                call_id: self.call_id(),
                 content: String::new(),
                 status: ToolCallStatus::Error,
             })
@@ -314,16 +383,13 @@ impl ToolCallTracker {
         let content = std::mem::take(&mut *self.content.lock().await);
 
         *self.result.lock().await = Some(ToolCallResult {
-            call_id: self.request.call_id.clone(),
+            call_id: self.call_id(),
             content,
             status: status.clone(),
         });
 
         self.sink
-            .emit(ToolCallEvent::finished(
-                self.request.call_id.clone(),
-                status,
-            ))
+            .emit(ToolCallEvent::finished(self.call_id(), status))
             .await
     }
 }
@@ -331,13 +397,7 @@ impl ToolCallTracker {
 #[async_trait]
 impl ToolCallResponder for ToolCallTracker {
     async fn send_extra(&self, data: Value) -> Result<(), ToolboxError> {
-        if self
-            .emit(ToolCallEvent::extra(
-                self.request.call_id.clone(),
-                data,
-            ))
-            .await
-        {
+        if self.emit(ToolCallEvent::extra(self.call_id(), data)).await {
             Ok(())
         } else {
             Err(ToolboxError::EventSinkClosed)
@@ -347,10 +407,7 @@ impl ToolCallResponder for ToolCallTracker {
     async fn send_text(&self, text: String) -> Result<(), ToolboxError> {
         self.content.lock().await.push_str(&text);
         if self
-            .emit(ToolCallEvent::payload(
-                self.request.call_id.clone(),
-                text,
-            ))
+            .emit(ToolCallEvent::payload(self.call_id(), text))
             .await
         {
             Ok(())
@@ -381,15 +438,15 @@ impl ToolCallGroup {
     fn start_call(
         &mut self,
         tool: Arc<dyn Tool>,
-        auth: Option<Arc<dyn ToolCallAuthorizer>>,
+        interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
+        manifest: Option<ToolManifest>,
         request: ToolCallRequest,
     ) {
         let tracker = Arc::new(ToolCallTracker::new(request, self.sink.clone()));
         self.tool_calls.push(tracker.clone());
         let cancellation = self.cancellation.clone();
         self.join_set.spawn(
-            run_call(tool, auth, tracker, cancellation)
-                .in_current_span(),
+            run_call(tool, interceptors, manifest, tracker, cancellation).in_current_span(),
         );
     }
 
@@ -416,7 +473,7 @@ impl ToolCallGroup {
         let mut requests = Vec::with_capacity(self.tool_calls.len());
         let mut results = Vec::with_capacity(self.tool_calls.len());
         for tracker in self.tool_calls {
-            requests.push(tracker.request().clone());
+            requests.push(tracker.request());
             results.push(tracker.take_result().await);
         }
 
@@ -430,7 +487,8 @@ async fn finish_canceled(tracker: &ToolCallTracker) {
 
 async fn run_call(
     tool: Arc<dyn Tool>,
-    auth: Option<Arc<dyn ToolCallAuthorizer>>,
+    interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
+    manifest: Option<ToolManifest>,
     tracker: Arc<ToolCallTracker>,
     cancellation: CancellationToken,
 ) {
@@ -439,15 +497,50 @@ async fn run_call(
         return;
     }
 
-    let call_id = tracker.request.call_id.clone();
-    let name = tracker.request.name.clone();
-    let arguments = tracker.request.arguments.clone();
+    let call_id = tracker.call_id();
+    let name = tracker.request().name.clone();
 
+    // Interceptor chain, before `Requested` is emitted. Interceptors observe
+    // and may rewrite the request in place; their responder output is buffered
+    // so that `Requested` always reaches consumers first.
+    let mut request = tracker.request();
+    let mut buffered: Vec<ToolCallEventKind> = Vec::new();
+    let mut allowed = true;
+    if !interceptors.is_empty() {
+        let buffering = Arc::new(BufferingToolCallResponder::default());
+        for interceptor in &interceptors {
+            let proceed = tokio::select! {
+                _ = cancellation.cancelled() => {
+                    finish_canceled(&tracker).await;
+                    return;
+                }
+                proceed = interceptor.intercept(
+                    &mut request,
+                    manifest.as_ref(),
+                    Arc::clone(&buffering) as Arc<dyn ToolCallResponder>,
+                    cancellation.clone(),
+                ) => proceed,
+            };
+            if !proceed {
+                allowed = false;
+                break;
+            }
+        }
+        buffered = buffering.drain();
+    }
+    tracker.set_request(request);
+
+    if cancellation.is_cancelled() {
+        finish_canceled(&tracker).await;
+        return;
+    }
+
+    let request = tracker.request();
     if !tracker
         .emit(ToolCallEvent::requested(
             call_id.clone(),
             name.clone(),
-            arguments.clone(),
+            request.arguments.clone(),
         ))
         .await
     {
@@ -459,34 +552,28 @@ async fn run_call(
         return;
     }
 
-    if cancellation.is_cancelled() {
-        finish_canceled(&tracker).await;
-        return;
+    // Flush the interceptors' buffered output now that `Requested` is out.
+    let mut buffered_payload = false;
+    for kind in buffered {
+        match kind {
+            ToolCallEventKind::Payload { text } => {
+                buffered_payload = true;
+                let _ = tracker.send_text(text).await;
+            }
+            ToolCallEventKind::Extra { data } => {
+                let _ = tracker.send_extra(data).await;
+            }
+            _ => {}
+        }
     }
 
-    let allowed = match &auth {
-        Some(auth) => {
-            tokio::select! {
-                _ = cancellation.cancelled() => {
-                    finish_canceled(&tracker).await;
-                    return;
-                }
-                allowed = auth.request(
-                    call_id.as_str(),
-                    name.as_str(),
-                    &arguments,
-                    Arc::clone(&tracker) as Arc<dyn ToolCallResponder>,
-                ) => allowed,
-            }
-        }
-        None => true,
-    };
-
     if !allowed {
-        warn!(call_id = %call_id, tool = %name, "tool call denied by user");
-        let _ = tracker
-            .send_text(TOOL_CALL_DENIED_BY_USER.to_string())
-            .await;
+        warn!(call_id = %call_id, tool = %name, "tool call denied by interceptor");
+        if !buffered_payload {
+            let _ = tracker
+                .send_text(TOOL_CALL_DENIED_BY_USER.to_string())
+                .await;
+        }
         let _ = tracker.finish(ToolCallStatus::Error).await;
         return;
     }
@@ -513,7 +600,10 @@ async fn run_call(
     // a tool that observed cancellation should report `Canceled` (not `Success`) so
     // downstream consumers (frontend, session log) mark it correctly.
     let cancel_check = cancellation.clone();
-    let status = match tool.call(&call_id, arguments, tracker.as_ref(), cancellation).await {
+    let status = match tool
+        .call(&call_id, request.arguments, tracker.as_ref(), cancellation)
+        .await
+    {
         Ok(()) => {
             if cancel_check.is_cancelled() {
                 ToolCallStatus::Canceled
@@ -550,7 +640,7 @@ pub struct Toolbox {
     /// Shared registry for concurrent tool-call tasks (`Arc` is applied in [`Toolbox::new`], not in [`ToolboxBuilder`]).
     tools: Arc<HashMap<String, Arc<dyn Tool>>>,
     manifests: Vec<ToolManifest>,
-    auth: Option<Arc<dyn ToolCallAuthorizer>>,
+    interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
     groups: Arc<Mutex<HashMap<ToolCallGroupId, ToolCallGroup>>>,
     next_group_id: Arc<AtomicU64>,
 }
@@ -559,7 +649,7 @@ pub struct Toolbox {
 pub struct ToolboxBuilder {
     tools: HashMap<String, Arc<dyn Tool>>,
     manifests: Vec<ToolManifest>,
-    auth: Option<Arc<dyn ToolCallAuthorizer>>,
+    interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
 }
 
 impl ToolboxBuilder {
@@ -567,7 +657,7 @@ impl ToolboxBuilder {
         Self {
             tools: HashMap::new(),
             manifests: Vec::new(),
-            auth: None,
+            interceptors: Vec::new(),
         }
     }
 
@@ -581,13 +671,16 @@ impl ToolboxBuilder {
         self
     }
 
-    pub fn auth(mut self, auth: Arc<dyn ToolCallAuthorizer>) -> Self {
-        self.auth = Some(auth);
+    /// Appends an interceptor to the chain. Interceptors run in registration
+    /// order before every tool call; the first one returning `false`
+    /// short-circuits the chain and skips execution.
+    pub fn interceptor(mut self, interceptor: Arc<dyn ToolCallInterceptor>) -> Self {
+        self.interceptors.push(interceptor);
         self
     }
 
     pub fn build(self) -> Toolbox {
-        Toolbox::new(self.tools, self.manifests, self.auth)
+        Toolbox::new(self.tools, self.manifests, self.interceptors)
     }
 }
 
@@ -595,12 +688,12 @@ impl Toolbox {
     pub fn new(
         tools: HashMap<String, Arc<dyn Tool>>,
         manifests: Vec<ToolManifest>,
-        auth: Option<Arc<dyn ToolCallAuthorizer>>,
+        interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
     ) -> Self {
         Self {
             tools: Arc::new(tools),
             manifests,
-            auth,
+            interceptors,
             groups: Arc::new(Mutex::new(HashMap::new())),
             next_group_id: Arc::new(AtomicU64::new(0)),
         }
@@ -652,13 +745,19 @@ impl Toolbox {
                 name: request.name.clone(),
             })?;
 
+        let manifest = self
+            .manifests
+            .iter()
+            .find(|m| m.name == request.name)
+            .cloned();
+
         let mut groups = self.groups.lock().await;
 
         let group = groups
             .get_mut(&group_id)
             .ok_or(ToolboxError::UnknownGroup { group_id })?;
 
-        group.start_call(tool, self.auth.clone(), request);
+        group.start_call(tool, self.interceptors.clone(), manifest, request);
 
         Ok(())
     }
@@ -755,26 +854,37 @@ mod tests {
                 pending_auth: Mutex::new(HashMap::new()),
             }
         }
+
+        async fn reply(&self, call_id: &str, data: Value) {
+            let tx = self
+                .pending_auth
+                .lock()
+                .expect("ask-user pending-auth mutex poisoned")
+                .remove(call_id)
+                .expect("pending auth entry");
+            let allow = data.get("allow").and_then(|v| v.as_bool()).unwrap_or(false);
+            let _ = tx.send(allow);
+        }
     }
 
     #[async_trait]
-    impl ToolCallAuthorizer for AskUserPolicy {
-        async fn request(
+    impl ToolCallInterceptor for AskUserPolicy {
+        async fn intercept(
             &self,
-            call_id: &str,
-            tool_name: &str,
-            args: &Value,
+            request: &mut ToolCallRequest,
+            _manifest: Option<&ToolManifest>,
             responder: Arc<dyn ToolCallResponder>,
+            _cancellation: CancellationToken,
         ) -> bool {
             let (tx, rx) = oneshot::channel();
             self.pending_auth
                 .lock()
                 .expect("ask-user pending-auth mutex poisoned")
-                .insert(call_id.to_string(), tx);
+                .insert(request.call_id.clone(), tx);
             if responder
                 .send_extra(json!({
-                    "tool_name": tool_name,
-                    "arguments": args,
+                    "tool_name": request.name,
+                    "arguments": request.arguments,
                 }))
                 .await
                 .is_err()
@@ -782,24 +892,10 @@ mod tests {
                 self.pending_auth
                     .lock()
                     .expect("ask-user pending-auth mutex poisoned")
-                    .remove(call_id);
+                    .remove(&request.call_id);
                 return false;
             }
             rx.await.unwrap_or(false)
-        }
-
-        async fn reply(&self, call_id: &str, data: Value) -> Result<(), ToolCallAuthError> {
-            let tx = self
-                .pending_auth
-                .lock()
-                .expect("ask-user pending-auth mutex poisoned")
-                .remove(call_id)
-                .ok_or_else(|| ToolboxError::NoPendingAuthorization {
-                    call_id: call_id.to_string(),
-                })?;
-            let allow = data.get("allow").and_then(|v| v.as_bool()).unwrap_or(false);
-            let _ = tx.send(allow);
-            Ok(())
         }
     }
 
@@ -812,8 +908,14 @@ mod tests {
     struct StaticPolicy(StaticDecision);
 
     #[async_trait]
-    impl ToolCallAuthorizer for StaticPolicy {
-        async fn request(&self, _: &str, _: &str, _: &Value, _: Arc<dyn ToolCallResponder>) -> bool {
+    impl ToolCallInterceptor for StaticPolicy {
+        async fn intercept(
+            &self,
+            _request: &mut ToolCallRequest,
+            _manifest: Option<&ToolManifest>,
+            _responder: Arc<dyn ToolCallResponder>,
+            _cancellation: CancellationToken,
+        ) -> bool {
             match self.0 {
                 StaticDecision::Allow => true,
                 StaticDecision::Deny => false,
@@ -895,20 +997,23 @@ mod tests {
     }
 
     fn build_test_toolbox(
-        auth: Arc<dyn ToolCallAuthorizer>,
+        interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
         manifests: Vec<ToolManifest>,
         tools: Vec<Arc<dyn Tool>>,
     ) -> Toolbox {
-        let mut builder = ToolboxBuilder::new().manifests(manifests).auth(auth);
+        let mut builder = ToolboxBuilder::new().manifests(manifests);
+        for interceptor in interceptors {
+            builder = builder.interceptor(interceptor);
+        }
         for tool in tools {
             builder = builder.tool(tool);
         }
         builder.build()
     }
 
-    fn make_toolbox(auth: Arc<dyn ToolCallAuthorizer>) -> Toolbox {
+    fn make_toolbox(interceptor: Arc<dyn ToolCallInterceptor>) -> Toolbox {
         build_test_toolbox(
-            auth,
+            vec![interceptor],
             test_manifests(),
             vec![
                 Arc::new(EchoTool) as Arc<dyn Tool>,
@@ -923,7 +1028,7 @@ mod tests {
         call_id: &str,
         name: &str,
         arguments: Value,
-    ) -> Vec<ToolCallEvent> {
+    ) -> (Vec<ToolCallEvent>, Vec<ToolCallRequest>, Vec<ToolCallResult>) {
         let (sink, mut rx) = MpscToolCallEventSink::pair(16);
         let group = tb.begin_group(sink, turn).await;
         tb.call_tool(
@@ -944,8 +1049,8 @@ mod tests {
             out
         };
         let (events, end_result) = tokio::join!(recv_fut, tb.end_group(group));
-        end_result.expect("end group");
-        events
+        let (requests, results) = end_result.expect("end group");
+        (events, requests, results)
     }
 
     async fn await_pending(policy: &AskUserPolicy, call_id: &str) {
@@ -991,7 +1096,7 @@ mod tests {
     #[tokio::test]
     async fn ask_user_allowed_emits_requested_then_permission_then_started_then_finished() {
         let policy = Arc::new(AskUserPolicy::new());
-        let policy_obj: Arc<dyn ToolCallAuthorizer> = policy.clone();
+        let policy_obj: Arc<dyn ToolCallInterceptor> = policy.clone();
         let tb_arc = Arc::new(make_toolbox(policy_obj));
         let collect_fut = tokio::spawn({
             let tb = tb_arc.clone();
@@ -1001,10 +1106,8 @@ mod tests {
         });
         await_pending(policy.as_ref(), "c1").await;
         policy
-            .reply("c1", json!({ "allow": true }))
-            .await
-            .expect("reply");
-        let events = collect_fut.await.expect("join");
+            .reply("c1", json!({ "allow": true })).await;
+        let (events, ..) = collect_fut.await.expect("join");
         assert_eq!(
             events,
             vec![
@@ -1023,7 +1126,7 @@ mod tests {
     #[tokio::test]
     async fn ask_user_denied_emits_permission_then_finished_with_denied_marker() {
         let policy = Arc::new(AskUserPolicy::new());
-        let policy_obj: Arc<dyn ToolCallAuthorizer> = policy.clone();
+        let policy_obj: Arc<dyn ToolCallInterceptor> = policy.clone();
         let tb_arc = Arc::new(make_toolbox(policy_obj));
         let collect_fut = tokio::spawn({
             let tb = tb_arc.clone();
@@ -1033,10 +1136,8 @@ mod tests {
         });
         await_pending(policy.as_ref(), "c1").await;
         policy
-            .reply("c1", json!({ "allow": false }))
-            .await
-            .expect("deny");
-        let events = collect_fut.await.expect("join");
+            .reply("c1", json!({ "allow": false })).await;
+        let (events, ..) = collect_fut.await.expect("join");
         assert_eq!(
             events,
             vec![
@@ -1054,7 +1155,7 @@ mod tests {
     #[tokio::test]
     async fn tool_error_path_still_emits_finished() {
         let policy = Arc::new(AskUserPolicy::new());
-        let policy_obj: Arc<dyn ToolCallAuthorizer> = policy.clone();
+        let policy_obj: Arc<dyn ToolCallInterceptor> = policy.clone();
         let tb_arc = Arc::new(make_toolbox(policy_obj));
         let collect_fut = tokio::spawn({
             let tb = tb_arc.clone();
@@ -1064,10 +1165,8 @@ mod tests {
         });
         await_pending(policy.as_ref(), "c2").await;
         policy
-            .reply("c2", json!({ "allow": true }))
-            .await
-            .expect("reply");
-        let events = collect_fut.await.expect("join");
+            .reply("c2", json!({ "allow": true })).await;
+        let (events, ..) = collect_fut.await.expect("join");
         assert_eq!(events.len(), 5);
         assert!(matches!(
             &events[0],
@@ -1110,9 +1209,9 @@ mod tests {
                 .tool(Arc::new(EchoTool) as Arc<dyn Tool>)
                 .build(),
         );
-        let out =
+        let (out, ..) =
             collect_call_events(tb.clone(), CancellationToken::new(), "c0", "echo", json!("z"))
-                .await;
+            .await;
         assert_eq!(
             out,
             vec![
@@ -1127,9 +1226,9 @@ mod tests {
     #[tokio::test]
     async fn allow_decision_emits_requested_then_started_then_finished() {
         let tb = Arc::new(make_toolbox(Arc::new(StaticPolicy(StaticDecision::Allow))));
-        let out =
+        let (out, ..) =
             collect_call_events(tb.clone(), CancellationToken::new(), "c3", "echo", json!("x"))
-                .await;
+            .await;
         assert_eq!(
             out,
             vec![
@@ -1144,7 +1243,7 @@ mod tests {
     #[tokio::test]
     async fn deny_decision_emits_requested_then_finished_with_denied_marker() {
         let tb = Arc::new(make_toolbox(Arc::new(StaticPolicy(StaticDecision::Deny))));
-        let out =
+        let (out, ..) =
             collect_call_events(tb.clone(), CancellationToken::new(), "c4", "echo", json!({})).await;
         assert_eq!(
             out,
@@ -1156,9 +1255,211 @@ mod tests {
         );
     }
 
-    fn make_toolbox_with_slow(auth: Arc<dyn ToolCallAuthorizer>) -> Toolbox {
+    /// Interceptor that records the arguments it observed, then replaces them.
+    struct RewritePolicy {
+        replacement: Value,
+        seen: Arc<Mutex<Vec<Value>>>,
+    }
+
+    #[async_trait]
+    impl ToolCallInterceptor for RewritePolicy {
+        async fn intercept(
+            &self,
+            request: &mut ToolCallRequest,
+            _manifest: Option<&ToolManifest>,
+            _responder: Arc<dyn ToolCallResponder>,
+            _cancellation: CancellationToken,
+        ) -> bool {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(request.arguments.clone());
+            request.arguments = self.replacement.clone();
+            true
+        }
+    }
+
+    /// Interceptor that only records the arguments it observed.
+    struct RecordPolicy {
+        seen: Arc<Mutex<Vec<Value>>>,
+    }
+
+    #[async_trait]
+    impl ToolCallInterceptor for RecordPolicy {
+        async fn intercept(
+            &self,
+            request: &mut ToolCallRequest,
+            _manifest: Option<&ToolManifest>,
+            _responder: Arc<dyn ToolCallResponder>,
+            _cancellation: CancellationToken,
+        ) -> bool {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(request.arguments.clone());
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn interceptor_rewrite_flows_to_requested_transcript_and_tool() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let tb = Arc::new(make_toolbox(Arc::new(RewritePolicy {
+            replacement: json!({ "msg": "rewritten" }),
+            seen: seen.clone(),
+        })));
+        let (events, requests, results) = collect_call_events(
+            tb,
+            CancellationToken::new(),
+            "c5",
+            "echo",
+            json!({ "msg": "original" }),
+        )
+        .await;
+        assert_eq!(
+            events,
+            vec![
+                ToolCallEvent::requested("c5".into(), "echo".into(), json!({ "msg": "rewritten" })),
+                ToolCallEvent::started("c5".into()),
+                ToolCallEvent::payload("c5".into(), r#"echo:{"msg":"rewritten"}"#.into()),
+                ToolCallEvent::finished("c5".into(), ToolCallStatus::Success)
+            ]
+        );
+        assert_eq!(requests[0].arguments, json!({ "msg": "rewritten" }));
+        assert_eq!(results[0].status, ToolCallStatus::Success);
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            &[json!({ "msg": "original" })]
+        );
+    }
+
+    #[tokio::test]
+    async fn interceptors_run_in_order_and_observe_rewrites() {
+        let second_seen = Arc::new(Mutex::new(Vec::new()));
+        let tb = Arc::new(build_test_toolbox(
+            vec![
+                Arc::new(RewritePolicy {
+                    replacement: json!({ "step": 1 }),
+                    seen: Arc::new(Mutex::new(Vec::new())),
+                }),
+                Arc::new(RecordPolicy {
+                    seen: second_seen.clone(),
+                }),
+            ],
+            test_manifests(),
+            vec![Arc::new(EchoTool) as Arc<dyn Tool>],
+        ));
+        let (events, ..) =
+            collect_call_events(tb, CancellationToken::new(), "c6", "echo", json!({ "step": 0 }))
+                .await;
+        assert_eq!(
+            second_seen.lock().unwrap().as_slice(),
+            &[json!({ "step": 1 })]
+        );
+        assert!(matches!(
+            &events[0],
+            ToolCallEvent {
+                kind: ToolCallEventKind::Requested { arguments, .. },
+                ..
+            } if arguments == &json!({ "step": 1 })
+        ));
+    }
+
+    #[tokio::test]
+    async fn interceptor_denial_short_circuits_chain() {
+        let second_seen = Arc::new(Mutex::new(Vec::new()));
+        let tb = Arc::new(build_test_toolbox(
+            vec![
+                Arc::new(StaticPolicy(StaticDecision::Deny)),
+                Arc::new(RecordPolicy {
+                    seen: second_seen.clone(),
+                }),
+            ],
+            test_manifests(),
+            vec![Arc::new(EchoTool) as Arc<dyn Tool>],
+        ));
+        let (events, ..) =
+            collect_call_events(tb, CancellationToken::new(), "c7", "echo", json!({})).await;
+        assert!(second_seen.lock().unwrap().is_empty());
+        assert_eq!(
+            events,
+            vec![
+                ToolCallEvent::requested("c7".into(), "echo".into(), json!({})),
+                ToolCallEvent::payload("c7".into(), TOOL_CALL_DENIED_BY_USER.into()),
+                ToolCallEvent::finished("c7".into(), ToolCallStatus::Error)
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn interceptor_denial_with_own_message_skips_fallback() {
+        struct VerboseDeny;
+
+        #[async_trait]
+        impl ToolCallInterceptor for VerboseDeny {
+            async fn intercept(
+                &self,
+                _request: &mut ToolCallRequest,
+                _manifest: Option<&ToolManifest>,
+                responder: Arc<dyn ToolCallResponder>,
+                _cancellation: CancellationToken,
+            ) -> bool {
+                let _ = responder.send_text("not today".to_string()).await;
+                false
+            }
+        }
+
+        let tb = Arc::new(make_toolbox(Arc::new(VerboseDeny)));
+        let (events, ..) =
+            collect_call_events(tb, CancellationToken::new(), "c9", "echo", json!({})).await;
+        assert_eq!(
+            events,
+            vec![
+                ToolCallEvent::requested("c9".into(), "echo".into(), json!({})),
+                ToolCallEvent::payload("c9".into(), "not today".into()),
+                ToolCallEvent::finished("c9".into(), ToolCallStatus::Error)
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn interceptor_cannot_rewrite_call_id_or_name() {
+        struct IdentityMangler;
+
+        #[async_trait]
+        impl ToolCallInterceptor for IdentityMangler {
+            async fn intercept(
+                &self,
+                request: &mut ToolCallRequest,
+                _manifest: Option<&ToolManifest>,
+                _responder: Arc<dyn ToolCallResponder>,
+                _cancellation: CancellationToken,
+            ) -> bool {
+                request.call_id = "mangled".into();
+                request.name = "mangled".into();
+                request.arguments = json!({ "ok": true });
+                true
+            }
+        }
+
+        let tb = Arc::new(make_toolbox(Arc::new(IdentityMangler)));
+        let (events, requests, ..) =
+            collect_call_events(tb, CancellationToken::new(), "c8", "echo", json!({})).await;
+        assert_eq!(requests[0].call_id, "c8");
+        assert_eq!(requests[0].name, "echo");
+        assert_eq!(requests[0].arguments, json!({ "ok": true }));
+        assert!(matches!(
+            &events[0],
+            ToolCallEvent {
+                call_id,
+                kind: ToolCallEventKind::Requested { name, arguments }
+            } if call_id == "c8" && name == "echo" && arguments == &json!({ "ok": true })
+        ));
+    }
+
+    fn make_toolbox_with_slow(interceptor: Arc<dyn ToolCallInterceptor>) -> Toolbox {
         build_test_toolbox(
-            auth,
+            vec![interceptor],
             vec![ToolManifest {
                 name: "slow".into(),
                 description: "".into(),
@@ -1172,7 +1473,7 @@ mod tests {
     async fn cancel_during_auth_finishes_canceled() {
         let turn = CancellationToken::new();
         let policy = Arc::new(AskUserPolicy::new());
-        let policy_obj: Arc<dyn ToolCallAuthorizer> = policy.clone();
+        let policy_obj: Arc<dyn ToolCallInterceptor> = policy.clone();
         let tb_arc = Arc::new(make_toolbox(policy_obj));
         let (sink, rx) = MpscToolCallEventSink::pair(16);
         let group = tb_arc
@@ -1255,18 +1556,4 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn reply_unknown_call_id_errors() {
-        let policy = AskUserPolicy::new();
-        let err = policy
-            .reply("missing", json!({ "allow": true }))
-            .await
-            .expect_err("should error");
-        assert_eq!(
-            err,
-            ToolboxError::NoPendingAuthorization {
-                call_id: "missing".into()
-            }
-        );
-    }
 }

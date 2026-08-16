@@ -486,11 +486,13 @@ mod tests {
 
     use async_trait::async_trait;
     use futures::Stream;
+    use moray_channels::{ChannelError, ToolCallReplyRouter};
     use moray_core::{
         ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,
-        ChatCompletionResponseChunk, ContextEngine, MorayError, Tool, ToolCallAuthorizer,
-        ToolCallResponder, ToolManifest,
+        ChatCompletionResponseChunk, ContextEngine, MorayError, Tool, ToolCallResponder,
+        ToolManifest,
     };
+    use tokio_util::sync::CancellationToken;
     use serde_json::Value;
     use crate::{ContextBuilder, SondaCompletionRegistration};
     use crate::transcripts::SondaSessionTranscripts;
@@ -547,18 +549,16 @@ mod tests {
         })]
     }
 
-    struct AllowAllAuthorizer;
+    struct StubAuthResolver;
 
     #[async_trait]
-    impl ToolCallAuthorizer for AllowAllAuthorizer {
-        async fn request(
+    impl ToolCallReplyRouter for StubAuthResolver {
+        async fn reply(
             &self,
-            _call_id: &str,
-            _tool_name: &str,
-            _args: &Value,
-            _responder: Arc<dyn ToolCallResponder>,
-        ) -> bool {
-            true
+            call_id: &str,
+            _data: Value,
+        ) -> std::result::Result<(), ChannelError> {
+            Err(ChannelError::ToolCallAuthNotFound(call_id.to_string()))
         }
     }
 
@@ -614,8 +614,10 @@ mod tests {
 
         async fn call(
             &self,
+            _call_id: &str,
             _args: Value,
             _responder: &dyn ToolCallResponder,
+            _cancellation: CancellationToken,
         ) -> std::result::Result<(), MorayError> {
             Ok(())
         }
@@ -642,7 +644,7 @@ mod tests {
         let _ = SondaBuilder::new()
             .settings(settings_store)
             .completion_registrations(testing_completion_registrations())
-            .authorizer(Arc::new(AllowAllAuthorizer))
+            .auth_resolver(Arc::new(StubAuthResolver))
             .context_builder(testing_context_builder())
             .skills(skills)
             .session_catalog(session_catalog)
@@ -1091,14 +1093,13 @@ allowed_tools = ["calc", "calc"]
 
     #[test]
     fn update_agent_rejects_unknown_allowed_tool() {
-        let authorizer = Arc::new(AllowAllAuthorizer);
         let dir = tempdir().unwrap();
         let server = dir.path().join("server.toml");
         let sessions = dir.path().join("sessions.toml");
         std::fs::write(&server, sample_server_settings_toml()).unwrap();
         std::fs::write(&sessions, r#"default_agent_id = "z9y8x7w6""#).unwrap();
         let settings_store = Arc::new(open_test_store(&server).unwrap());
-        let toolbox_factory = testing_toolbox_factory(authorizer, settings_store);
+        let toolbox_factory = testing_toolbox_factory(Vec::new(), settings_store);
         let err = toolbox_factory
             .validate_allowed_tools(&["nope".into()])
             .expect_err("unknown tool");
@@ -1173,7 +1174,7 @@ parameters = '{}'
     }
 
     fn testing_toolbox_factory(
-        authorizer: Arc<dyn moray_core::ToolCallAuthorizer>,
+        interceptors: Vec<Arc<dyn moray_core::ToolCallInterceptor>>,
         settings_store: Arc<SondaSettingsStore>,
     ) -> SondaToolboxFactory {
         let workspace = Arc::new(crate::SondaSessionWorkspace::new(
@@ -1181,7 +1182,7 @@ parameters = '{}'
         ));
         SondaToolboxFactory::new(
             settings_store,
-            authorizer,
+            interceptors,
             testing_tools_catalog(),
             testing_registrations(testing_shell_env()),
             workspace,

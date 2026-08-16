@@ -19,5 +19,5 @@ pub use error::{
     SessionLiveEventsError,
 };
 pub use manager::{
-    ChannelEntry, ChannelFactoryFn, ChannelsManager, SessionLiveEvents,
+    ChannelEntry, ChannelFactoryFn, ChannelsManager, SessionLiveEvents, ToolCallReplyRouter,
 };

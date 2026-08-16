@@ -19,9 +19,9 @@ pub use completion::{
 };
 pub use context::ContextEngine;
 pub use toolbox::{
-    Tool, ToolCallAuthError, ToolCallAuthorizer, ToolCallEvent, ToolCallEventKind,
-    ToolCallEventSink, ToolCallGroupId, ToolCallResponder, Toolbox,
-    ToolboxBuilder, ToolboxError, TypedTool, TOOL_CALL_CANCELED, TOOL_CALL_DENIED_BY_USER,
+    Tool, ToolCallEvent, ToolCallEventKind, ToolCallEventSink, ToolCallGroupId,
+    ToolCallInterceptor, ToolCallResponder, Toolbox, ToolboxBuilder, ToolboxError, TypedTool,
+    TOOL_CALL_CANCELED, TOOL_CALL_DENIED_BY_USER,
 };
 pub use types::{
     MorayError, ToolCallRequest, ToolCallResult, ToolCallStatus, ToolManifest,

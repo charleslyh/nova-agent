@@ -112,6 +112,6 @@ fn empty_toolbox() -> Arc<Toolbox> {
     Arc::new(Toolbox::new(
         std::collections::HashMap::new(),
         Vec::new(),
-        None,
+        Vec::new(),
     ))
 }

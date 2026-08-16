@@ -195,6 +195,7 @@ mod tests {
             SessionEventKind::AgentResponse(SessionAgentResponse {
                 agent_id: agent_id.into(),
                 role,
+                call_id: None,
                 data: event,
             }),
         )

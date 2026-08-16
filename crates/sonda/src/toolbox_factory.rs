@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use moray_core::{MorayError, Tool, ToolCallAuthorizer, Toolbox, ToolboxBuilder};
+use moray_core::{MorayError, Tool, ToolCallInterceptor, Toolbox, ToolboxBuilder};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{InvalidContent, Result};
@@ -38,7 +38,7 @@ impl SondaToolRegistration {
 /// Per-agent [`Toolbox`] construction backed by registered built-in tools and session settings.
 pub struct SondaToolboxFactory {
     settings_store: Arc<SondaSettingsStore>,
-    authorizer: Arc<dyn ToolCallAuthorizer>,
+    interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
     catalog: SondaToolCatalog,
     registrations: Vec<SondaToolRegistration>,
     workspace: Arc<SondaSessionWorkspace>,
@@ -47,7 +47,7 @@ pub struct SondaToolboxFactory {
 impl SondaToolboxFactory {
     pub fn new(
         settings_store: Arc<SondaSettingsStore>,
-        authorizer: Arc<dyn ToolCallAuthorizer>,
+        interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
         catalog: SondaToolCatalog,
         registrations: Vec<SondaToolRegistration>,
         workspace: Arc<SondaSessionWorkspace>,
@@ -78,7 +78,7 @@ impl SondaToolboxFactory {
 
         Ok(Self {
             settings_store,
-            authorizer,
+            interceptors,
             catalog,
             registrations,
             workspace,
@@ -156,7 +156,10 @@ impl SondaToolboxFactory {
         for tool in tools {
             builder = builder.tool(tool);
         }
-        Ok(builder.auth(self.authorizer.clone()).build())
+        for interceptor in &self.interceptors {
+            builder = builder.interceptor(interceptor.clone());
+        }
+        Ok(builder.build())
     }
 }
 

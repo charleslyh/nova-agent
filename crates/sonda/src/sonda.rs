@@ -16,7 +16,8 @@ use crate::session_catalog::{
 use moray_skills::SkillsManager;
 use serde::Serialize;
 use serde_json::Value;
-use moray_core::ToolCallAuthorizer;
+use moray_channels::ToolCallReplyRouter;
+use moray_core::ToolCallInterceptor;
 use moray_session::LiveSessions;
 
 use crate::error::{
@@ -43,7 +44,8 @@ pub struct Sonda {
     pub session_workspace: Arc<SondaSessionWorkspace>,
     pub toolbox_factory: Arc<SondaToolboxFactory>,
     pub agent_runner_factory: Arc<SondaAgentRunnerFactory>,
-    pub authorizer: Arc<dyn ToolCallAuthorizer>,
+    /// Delivers out-of-band tool-call approval replies to waiting interceptors.
+    pub auth_resolver: Arc<dyn ToolCallReplyRouter>,
     pub snapshot: Arc<SondaSnapshot>,
     pub live_sessions: LiveSessions,
     pub channel_catalog: Arc<ChannelCatalog>,
@@ -60,7 +62,7 @@ impl Sonda {
         session_workspace: Arc<SondaSessionWorkspace>,
         toolbox_factory: Arc<SondaToolboxFactory>,
         agent_runner_factory: Arc<SondaAgentRunnerFactory>,
-        authorizer: Arc<dyn ToolCallAuthorizer>,
+        auth_resolver: Arc<dyn ToolCallReplyRouter>,
         snapshot: Arc<SondaSnapshot>,
         live_sessions: LiveSessions,
         channel_catalog: Arc<ChannelCatalog>,
@@ -74,7 +76,7 @@ impl Sonda {
             session_workspace,
             toolbox_factory,
             agent_runner_factory,
-            authorizer,
+            auth_resolver,
             snapshot,
             live_sessions,
             channel_catalog,
@@ -296,7 +298,8 @@ impl Sonda {
 pub struct SondaBuilder {
     settings_store: Option<Arc<SondaSettingsStore>>,
     completion_registrations: Option<Vec<SondaCompletionRegistration>>,
-    authorizer: Option<Arc<dyn ToolCallAuthorizer>>,
+    auth_resolver: Option<Arc<dyn ToolCallReplyRouter>>,
+    interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
     context_builder: Option<ContextBuilder>,
     skills: Option<SkillsManager>,
     session_catalog: Option<Arc<SondaSessionCatalog>>,
@@ -319,7 +322,8 @@ impl SondaBuilder {
         Self {
             settings_store: None,
             completion_registrations: None,
-            authorizer: None,
+            auth_resolver: None,
+            interceptors: Vec::new(),
             context_builder: None,
             skills: None,
             session_catalog: None,
@@ -345,8 +349,14 @@ impl SondaBuilder {
         self
     }
 
-    pub fn authorizer(mut self, authorizer: Arc<dyn ToolCallAuthorizer>) -> Self {
-        self.authorizer = Some(authorizer);
+    pub fn auth_resolver(mut self, auth_resolver: Arc<dyn ToolCallReplyRouter>) -> Self {
+        self.auth_resolver = Some(auth_resolver);
+        self
+    }
+
+    /// Appends a tool-call interceptor; the chain runs in registration order.
+    pub fn tool_call_interceptor(mut self, interceptor: Arc<dyn ToolCallInterceptor>) -> Self {
+        self.interceptors.push(interceptor);
         self
     }
 
@@ -441,9 +451,9 @@ impl SondaBuilder {
             .channel_factories
             .ok_or_else(|| error_missing_field("channel_factories"))?;
 
-        let authorizer = self
-            .authorizer
-            .ok_or_else(|| error_missing_field("authorizer"))?;
+        let auth_resolver = self
+            .auth_resolver
+            .ok_or_else(|| error_missing_field("auth_resolver"))?;
 
         let context_builder = self
             .context_builder
@@ -451,7 +461,7 @@ impl SondaBuilder {
 
         let toolbox_factory = Arc::new(SondaToolboxFactory::new(
             settings_store.clone(),
-            authorizer.clone(),
+            self.interceptors,
             harness_tool_catalog,
             harness_tools,
             session_workspace.clone(),
@@ -485,7 +495,7 @@ impl SondaBuilder {
 
         let channels = Arc::new(ChannelsManager::new(
             session_transcripts.clone(),
-            authorizer.clone(),
+            auth_resolver.clone(),
             live_sessions.clone(),
             channel_factories,
         ));
@@ -498,7 +508,7 @@ impl SondaBuilder {
             session_workspace,
             toolbox_factory,
             agent_runner_factory,
-            authorizer,
+            auth_resolver,
             snapshot,
             live_sessions,
             channel_catalog,

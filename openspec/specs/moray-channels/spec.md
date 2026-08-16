@@ -48,7 +48,7 @@ Defines **`moray-channels`**: shared IM channel framework (`ImChannel` and relat
 - **WHEN** an `ImChannel` emits `InboundMessage::User`
 - **THEN** the supervisor MUST call `LiveSessions::submit` (or `reset` for `/new`) on the bound `session_id`
 - **WHEN** an `ImChannel` emits `InboundMessage::Auth`
-- **THEN** the supervisor MUST route the decision through the injected `ToolCallAuthorizer`
+- **THEN** the supervisor MUST route the decision through the injected `ToolCallReplyRouter`
 
 ### Requirement: SessionLiveEvents abstraction
 
