@@ -26,9 +26,9 @@ use async_openai::Client;
 use async_trait::async_trait;
 use futures::Stream;
 use futures::StreamExt;
-use moray_core::{
+use nova_core::{
     ChatCompletion, ChatCompletionFinishReason, ChatCompletionRequestMessage,
-    ChatCompletionResponseChunk, ChatCompletionUsage, MorayError, ToolCallRequest, ToolManifest,
+    ChatCompletionResponseChunk, ChatCompletionUsage, NovaError, ToolCallRequest, ToolManifest,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -207,6 +207,7 @@ fn truncate_protocol_payload(payload: &str, limit: usize) -> String {
     format!("{}... [truncated, total {total} bytes]", &payload[..end])
 }
 
+#[allow(clippy::too_many_arguments)]
 fn log_llm_request(
     model: &str,
     api_base: &str,
@@ -378,10 +379,8 @@ struct ThinkTagStreamParser {
 impl ThinkTagStreamParser {
     const THINK_OPEN: &'static str = concat!("<", "think", ">");
     const THINK_CLOSE: &'static str = concat!("<", "/", "think", ">");
-    const OPEN_TAGS: &'static [&'static str] =
-        &["<think>", Self::THINK_OPEN];
-    pub(crate) const CLOSE_TAGS: &'static [&'static str] =
-        &["</think>", Self::THINK_CLOSE];
+    const OPEN_TAGS: &'static [&'static str] = &["<think>", Self::THINK_OPEN];
+    pub(crate) const CLOSE_TAGS: &'static [&'static str] = &["</think>", Self::THINK_CLOSE];
 
     fn new() -> Self {
         Self {
@@ -428,7 +427,8 @@ impl ThinkTagStreamParser {
                 break;
             }
 
-            if let Some((idx, open_tag)) = find_earliest_tag(self.buffer.as_str(), Self::OPEN_TAGS) {
+            if let Some((idx, open_tag)) = find_earliest_tag(self.buffer.as_str(), Self::OPEN_TAGS)
+            {
                 if idx > 0 {
                     let text = self.buffer[..idx].to_string();
                     out.push(ParsedTextChunk::Text(text));
@@ -487,7 +487,7 @@ fn find_think_close(haystack: &str) -> Option<(usize, usize)> {
             let idx = search_from + rel;
             if let Some(end_rel) = haystack[idx..].find('>') {
                 let len = end_rel + 1;
-                if best.map_or(true, |(best_idx, _)| idx < best_idx) {
+                if best.is_none_or(|(best_idx, _)| idx < best_idx) {
                     best = Some((idx, len));
                 }
             }
@@ -646,8 +646,8 @@ async fn completion_non_stream(
     connect_started: Instant,
     started_at: Instant,
 ) -> Result<
-    Pin<Box<dyn Stream<Item = Result<ChatCompletionResponseChunk, MorayError>> + Send>>,
-    MorayError,
+    Pin<Box<dyn Stream<Item = Result<ChatCompletionResponseChunk, NovaError>> + Send>>,
+    NovaError,
 > {
     let resp = client.chat().create(req).await.map_err(|e| {
         warn!(
@@ -657,7 +657,7 @@ async fn completion_non_stream(
             error = %e,
             "llm request failed"
         );
-        MorayError::Message(e.to_string())
+        NovaError::Message(e.to_string())
     })?;
     let connect_ms = connect_started.elapsed().as_millis() as u64;
     info!(
@@ -678,7 +678,7 @@ async fn completion_non_stream(
         let usage = resp.usage.clone();
 
         let Some(choice) = resp.choices.first() else {
-            yield Err(MorayError::Message("llm response had no choices".to_string()));
+            yield Err(NovaError::Message("llm response had no choices".to_string()));
             return;
         };
 
@@ -790,8 +790,8 @@ impl ChatCompletion for OpenAIChatCompletion {
         tools: &[ToolManifest],
         stream: bool,
     ) -> Result<
-        Pin<Box<dyn Stream<Item = Result<ChatCompletionResponseChunk, MorayError>> + Send>>,
-        MorayError,
+        Pin<Box<dyn Stream<Item = Result<ChatCompletionResponseChunk, NovaError>> + Send>>,
+        NovaError,
     > {
         let roles = count_message_roles(messages);
         let tool_names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
@@ -848,7 +848,7 @@ impl ChatCompletion for OpenAIChatCompletion {
                 error = %e,
                 "llm request failed"
             );
-            MorayError::Message(e.to_string())
+            NovaError::Message(e.to_string())
         })?;
         let connect_ms = connect_started.elapsed().as_millis() as u64;
         info!(
@@ -890,7 +890,7 @@ impl ChatCompletion for OpenAIChatCompletion {
                             &wire_request_for_error,
                             error_text.as_str(),
                         );
-                        yield Err(MorayError::Message(error_text));
+                        yield Err(NovaError::Message(error_text));
                         return;
                     }
                 };
@@ -1104,9 +1104,7 @@ fn map_usage(
     protocol: Option<&LlmResponseProtocol>,
 ) -> Option<ChatCompletionUsage> {
     let u = usage?;
-    let (cached, reasoning) = protocol
-        .and_then(|p| extract_usage_details(p))
-        .unwrap_or((0, 0));
+    let (cached, reasoning) = protocol.and_then(extract_usage_details).unwrap_or((0, 0));
     Some(ChatCompletionUsage {
         prompt_tokens: u.prompt_tokens,
         completion_tokens: u.completion_tokens,
@@ -1161,6 +1159,7 @@ fn build_response_protocol(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn log_llm_completed(
     model: &str,
     connect_ms: u64,
@@ -1248,10 +1247,9 @@ fn merge_tool_chunk(buf: &mut HashMap<u32, (String, String, String)>, tc: &AoMes
 mod tests {
     use super::{
         extract_invalid_stream_payload, extract_reasoning_content_delta,
-        extract_reasoning_content_message, format_repro_curl,
-        merge_vllm_reasoning_extra_body, parse_reasoning_effort,
-        reasoning_effort_from_extensions, truncate_protocol_payload, AoCreateRequest,
-        ParsedTextChunk, ReasoningEffort, ThinkTagStreamParser,
+        extract_reasoning_content_message, format_repro_curl, merge_vllm_reasoning_extra_body,
+        parse_reasoning_effort, reasoning_effort_from_extensions, truncate_protocol_payload,
+        AoCreateRequest, ParsedTextChunk, ReasoningEffort, ThinkTagStreamParser,
     };
 
     fn text(s: &str) -> ParsedTextChunk {
@@ -1365,7 +1363,7 @@ mod tests {
         p.enter_implicit_think();
         assert_eq!(p.push("reasoning"), vec![think("reasoning")]);
         assert_eq!(
-            p.push(concat!("<", "/", "think", ">") ),
+            p.push(concat!("<", "/", "think", ">")),
             vec![ParsedTextChunk::ThinkDone]
         );
         assert_eq!(p.push("answer"), vec![text("answer")]);

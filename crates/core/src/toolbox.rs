@@ -19,10 +19,7 @@ use tracing::{info, warn, Instrument};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::types::{
-    MorayError, ToolCallRequest, ToolCallResult, ToolCallStatus,
-    ToolManifest,
-};
+use crate::types::{NovaError, ToolCallRequest, ToolCallResult, ToolCallStatus, ToolManifest};
 
 // ---------------------------------------------------------------------------
 // Constants & errors
@@ -52,9 +49,9 @@ pub enum ToolboxError {
     DeliverFailed { reason: String },
 }
 
-impl From<ToolboxError> for MorayError {
+impl From<ToolboxError> for NovaError {
     fn from(value: ToolboxError) -> Self {
-        MorayError::Message(value.to_string())
+        NovaError::Message(value.to_string())
     }
 }
 
@@ -74,12 +71,18 @@ pub enum ToolCallEventKind {
     Started,
 
     /// Only `Payload` events are forwarded into model reasoning;
-    Payload { text: String },
+    Payload {
+        text: String,
+    },
 
     /// Out-of-band metadata (authorization prompts, progress). Not model `tool` message content.
-    Extra { data: Value },
+    Extra {
+        data: Value,
+    },
 
-    Finished { status: ToolCallStatus },
+    Finished {
+        status: ToolCallStatus,
+    },
 }
 
 /// Tool-call lifecycle event: stable `call_id` plus a tagged [`ToolCallEventKind`] payload.
@@ -153,7 +156,7 @@ pub trait Tool: Send + Sync {
         args: Value,
         responder: &dyn ToolCallResponder,
         cancellation: CancellationToken,
-    ) -> Result<(), MorayError>;
+    ) -> Result<(), NovaError>;
 }
 
 /// Typed tool: per-tool [`Args`](Self::Args) + [`run`](Self::run). Metadata (description, JSON schema) comes from the app-layer tool catalog.
@@ -174,7 +177,7 @@ pub trait TypedTool: Send + Sync {
         args: Self::Args,
         responder: &dyn ToolCallResponder,
         cancellation: CancellationToken,
-    ) -> Result<(), MorayError>;
+    ) -> Result<(), NovaError>;
 }
 
 #[async_trait]
@@ -192,20 +195,19 @@ where
         args: Value,
         responder: &dyn ToolCallResponder,
         cancellation: CancellationToken,
-    ) -> Result<(), MorayError> {
+    ) -> Result<(), NovaError> {
         let tool_name = T::NAME;
         tracing::info!(
             "[tool] {} args={}",
             tool_name,
             serde_json::to_string(&args).unwrap_or_default()
         );
-        let args = serde_json::from_value(args).map_err(|e| {
-            MorayError::Message(format!("{tool_name}: invalid JSON arguments: {e}"))
-        })?;
+        let args = serde_json::from_value(args)
+            .map_err(|e| NovaError::Message(format!("{tool_name}: invalid JSON arguments: {e}")))?;
         let result = self
             .run(args, responder, cancellation)
             .await
-            .map_err(|e| MorayError::Message(format!("{tool_name}: {e}")));
+            .map_err(|e| NovaError::Message(format!("{tool_name}: {e}")));
         tracing::info!("[tool] {} result={:?}", tool_name, result);
         result
     }
@@ -445,9 +447,8 @@ impl ToolCallGroup {
         let tracker = Arc::new(ToolCallTracker::new(request, self.sink.clone()));
         self.tool_calls.push(tracker.clone());
         let cancellation = self.cancellation.clone();
-        self.join_set.spawn(
-            run_call(tool, interceptors, manifest, tracker, cancellation).in_current_span(),
-        );
+        self.join_set
+            .spawn(run_call(tool, interceptors, manifest, tracker, cancellation).in_current_span());
     }
 
     async fn join(mut self) -> (Vec<ToolCallRequest>, Vec<ToolCallResult>) {
@@ -737,13 +738,13 @@ impl Toolbox {
         group_id: ToolCallGroupId,
         request: ToolCallRequest,
     ) -> Result<(), ToolboxError> {
-        let tool = self
-            .tools
-            .get(&request.name)
-            .cloned()
-            .ok_or_else(|| ToolboxError::UnknownTool {
-                name: request.name.clone(),
-            })?;
+        let tool =
+            self.tools
+                .get(&request.name)
+                .cloned()
+                .ok_or_else(|| ToolboxError::UnknownTool {
+                    name: request.name.clone(),
+                })?;
 
         let manifest = self
             .manifests
@@ -792,12 +793,15 @@ mod serde_tests {
     fn flatten_serializes_kind_fields_at_top_level() {
         let ev = ToolCallEvent::requested("c1".into(), "echo".into(), json!("hi"));
         let v = serde_json::to_value(&ev).unwrap();
-        assert_eq!(v, json!({
-            "call_id": "c1",
-            "type": "requested",
-            "name": "echo",
-            "arguments": "hi"
-        }));
+        assert_eq!(
+            v,
+            json!({
+                "call_id": "c1",
+                "type": "requested",
+                "name": "echo",
+                "arguments": "hi"
+            })
+        );
         assert!(v.get("kind").is_none());
     }
 
@@ -935,7 +939,7 @@ mod tests {
             args: Value,
             responder: &dyn ToolCallResponder,
             _cancellation: CancellationToken,
-        ) -> Result<(), MorayError> {
+        ) -> Result<(), NovaError> {
             responder
                 .send_text(format!(
                     "echo:{}",
@@ -958,7 +962,7 @@ mod tests {
             _: Value,
             _responder: &dyn ToolCallResponder,
             _cancellation: CancellationToken,
-        ) -> Result<(), MorayError> {
+        ) -> Result<(), NovaError> {
             std::future::pending::<()>().await;
             unreachable!()
         }
@@ -976,8 +980,8 @@ mod tests {
             _: Value,
             _responder: &dyn ToolCallResponder,
             _cancellation: CancellationToken,
-        ) -> Result<(), MorayError> {
-            Err(MorayError::Message("boom".into()))
+        ) -> Result<(), NovaError> {
+            Err(NovaError::Message("boom".into()))
         }
     }
 
@@ -1028,7 +1032,11 @@ mod tests {
         call_id: &str,
         name: &str,
         arguments: Value,
-    ) -> (Vec<ToolCallEvent>, Vec<ToolCallRequest>, Vec<ToolCallResult>) {
+    ) -> (
+        Vec<ToolCallEvent>,
+        Vec<ToolCallRequest>,
+        Vec<ToolCallResult>,
+    ) {
         let (sink, mut rx) = MpscToolCallEventSink::pair(16);
         let group = tb.begin_group(sink, turn).await;
         tb.call_tool(
@@ -1069,8 +1077,7 @@ mod tests {
         buffer: &mut Vec<ToolCallEvent>,
     ) {
         while let Some(ev) = rx.recv().await {
-            let started = ev.call_id == call_id
-                && matches!(ev.kind, ToolCallEventKind::Started);
+            let started = ev.call_id == call_id && matches!(ev.kind, ToolCallEventKind::Started);
             buffer.push(ev);
             if started {
                 return;
@@ -1105,8 +1112,7 @@ mod tests {
             }
         });
         await_pending(policy.as_ref(), "c1").await;
-        policy
-            .reply("c1", json!({ "allow": true })).await;
+        policy.reply("c1", json!({ "allow": true })).await;
         let (events, ..) = collect_fut.await.expect("join");
         assert_eq!(
             events,
@@ -1135,17 +1141,13 @@ mod tests {
             }
         });
         await_pending(policy.as_ref(), "c1").await;
-        policy
-            .reply("c1", json!({ "allow": false })).await;
+        policy.reply("c1", json!({ "allow": false })).await;
         let (events, ..) = collect_fut.await.expect("join");
         assert_eq!(
             events,
             vec![
                 ToolCallEvent::requested("c1".into(), "echo".into(), json!({})),
-                ToolCallEvent::extra(
-                    "c1".into(),
-                    json!({ "tool_name": "echo", "arguments": {} }),
-                ),
+                ToolCallEvent::extra("c1".into(), json!({ "tool_name": "echo", "arguments": {} }),),
                 ToolCallEvent::payload("c1".into(), TOOL_CALL_DENIED_BY_USER.into()),
                 ToolCallEvent::finished("c1".into(), ToolCallStatus::Error)
             ]
@@ -1164,8 +1166,7 @@ mod tests {
             }
         });
         await_pending(policy.as_ref(), "c2").await;
-        policy
-            .reply("c2", json!({ "allow": true })).await;
+        policy.reply("c2", json!({ "allow": true })).await;
         let (events, ..) = collect_fut.await.expect("join");
         assert_eq!(events.len(), 5);
         assert!(matches!(
@@ -1209,9 +1210,14 @@ mod tests {
                 .tool(Arc::new(EchoTool) as Arc<dyn Tool>)
                 .build(),
         );
-        let (out, ..) =
-            collect_call_events(tb.clone(), CancellationToken::new(), "c0", "echo", json!("z"))
-            .await;
+        let (out, ..) = collect_call_events(
+            tb.clone(),
+            CancellationToken::new(),
+            "c0",
+            "echo",
+            json!("z"),
+        )
+        .await;
         assert_eq!(
             out,
             vec![
@@ -1226,9 +1232,14 @@ mod tests {
     #[tokio::test]
     async fn allow_decision_emits_requested_then_started_then_finished() {
         let tb = Arc::new(make_toolbox(Arc::new(StaticPolicy(StaticDecision::Allow))));
-        let (out, ..) =
-            collect_call_events(tb.clone(), CancellationToken::new(), "c3", "echo", json!("x"))
-            .await;
+        let (out, ..) = collect_call_events(
+            tb.clone(),
+            CancellationToken::new(),
+            "c3",
+            "echo",
+            json!("x"),
+        )
+        .await;
         assert_eq!(
             out,
             vec![
@@ -1243,8 +1254,14 @@ mod tests {
     #[tokio::test]
     async fn deny_decision_emits_requested_then_finished_with_denied_marker() {
         let tb = Arc::new(make_toolbox(Arc::new(StaticPolicy(StaticDecision::Deny))));
-        let (out, ..) =
-            collect_call_events(tb.clone(), CancellationToken::new(), "c4", "echo", json!({})).await;
+        let (out, ..) = collect_call_events(
+            tb.clone(),
+            CancellationToken::new(),
+            "c4",
+            "echo",
+            json!({}),
+        )
+        .await;
         assert_eq!(
             out,
             vec![
@@ -1270,10 +1287,7 @@ mod tests {
             _responder: Arc<dyn ToolCallResponder>,
             _cancellation: CancellationToken,
         ) -> bool {
-            self.seen
-                .lock()
-                .unwrap()
-                .push(request.arguments.clone());
+            self.seen.lock().unwrap().push(request.arguments.clone());
             request.arguments = self.replacement.clone();
             true
         }
@@ -1293,10 +1307,7 @@ mod tests {
             _responder: Arc<dyn ToolCallResponder>,
             _cancellation: CancellationToken,
         ) -> bool {
-            self.seen
-                .lock()
-                .unwrap()
-                .push(request.arguments.clone());
+            self.seen.lock().unwrap().push(request.arguments.clone());
             true
         }
     }
@@ -1349,9 +1360,14 @@ mod tests {
             test_manifests(),
             vec![Arc::new(EchoTool) as Arc<dyn Tool>],
         ));
-        let (events, ..) =
-            collect_call_events(tb, CancellationToken::new(), "c6", "echo", json!({ "step": 0 }))
-                .await;
+        let (events, ..) = collect_call_events(
+            tb,
+            CancellationToken::new(),
+            "c6",
+            "echo",
+            json!({ "step": 0 }),
+        )
+        .await;
         assert_eq!(
             second_seen.lock().unwrap().as_slice(),
             &[json!({ "step": 1 })]
@@ -1476,9 +1492,7 @@ mod tests {
         let policy_obj: Arc<dyn ToolCallInterceptor> = policy.clone();
         let tb_arc = Arc::new(make_toolbox(policy_obj));
         let (sink, rx) = MpscToolCallEventSink::pair(16);
-        let group = tb_arc
-            .begin_group(sink, turn.clone())
-            .await;
+        let group = tb_arc.begin_group(sink, turn.clone()).await;
         tb_arc
             .call_tool(
                 group,
@@ -1493,8 +1507,7 @@ mod tests {
         let collect_fut = tokio::spawn(drain_receiver(rx));
         await_pending(policy.as_ref(), "cx").await;
         turn.cancel();
-        let (events, end_result) =
-            tokio::join!(collect_fut, tb_arc.end_group(group));
+        let (events, end_result) = tokio::join!(collect_fut, tb_arc.end_group(group));
         end_result.expect("end group");
         let events = events.expect("join");
         assert!(matches!(
@@ -1520,9 +1533,7 @@ mod tests {
             StaticDecision::Allow,
         ))));
         let (sink, mut rx) = MpscToolCallEventSink::pair(16);
-        let group = tb_arc
-            .begin_group(sink, turn.clone())
-            .await;
+        let group = tb_arc.begin_group(sink, turn.clone()).await;
         tb_arc
             .call_tool(
                 group,
@@ -1555,5 +1566,4 @@ mod tests {
             }) if call_id == "cy" && *status == ToolCallStatus::Canceled
         ));
     }
-
 }

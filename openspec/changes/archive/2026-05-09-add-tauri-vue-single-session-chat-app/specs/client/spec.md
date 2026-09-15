@@ -6,7 +6,7 @@ The repository SHALL provide the Tauri v2 desktop client as a sub-app under the 
 #### Scenario: Client is colocated with other desktop sub-apps
 - **WHEN** reviewing the repository layout after implementation
 - **THEN** the Tauri desktop client's source and configuration MUST live at `desktop/client`
-- **AND** the client MUST NOT be hosted inside reusable Moray runtime crates
+- **AND** the client MUST NOT be hosted inside reusable Nova runtime crates
 
 ### Requirement: Desktop-only Tauri v2 build
 The Tauri desktop client SHALL target Tauri v2 with desktop-only build targets and SHALL NOT enable mobile platforms in this change.
@@ -68,7 +68,7 @@ The desktop client's Tauri command surface SHALL be limited to system, window, a
 - **THEN** those commands MUST be limited to local system / shell responsibilities
 
 ### Requirement: Desktop is a self-contained Cargo workspace
-The `desktop/` directory SHALL form its own Cargo workspace, excluded from the root workspace, and SHALL reference Moray runtime crates and `moray-builtin` via path dependencies.
+The `desktop/` directory SHALL form its own Cargo workspace, excluded from the root workspace, and SHALL reference Nova runtime crates and `nova-builtin` via path dependencies.
 
 #### Scenario: Root workspace excludes desktop
 - **WHEN** inspecting the root `Cargo.toml`
@@ -78,4 +78,4 @@ The `desktop/` directory SHALL form its own Cargo workspace, excluded from the r
 #### Scenario: Desktop workspace owns its members
 - **WHEN** inspecting `desktop/Cargo.toml`
 - **THEN** it MUST declare its own `[workspace]` with members `server` and `client/src-tauri`
-- **AND** dependencies on `moray-core`, `moray-sessions`, and `moray-builtin` MUST be declared via `path` references
+- **AND** dependencies on `nova-core`, `nova-sessions`, and `nova-builtin` MUST be declared via `path` references

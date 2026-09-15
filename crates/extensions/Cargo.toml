@@ -1,40 +1,28 @@
 [package]
-name = "moray-extensions"
+name = "nova-extensions"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Moray extension trait implementations and built-in tools"
+description = "Nova extension trait implementations and built-in tools"
 
 [features]
 default = ["serde"]
-serde = ["dep:serde", "moray-core/serde", "moray-session/serde"]
+serde = ["dep:serde", "nova-core/serde"]
 
 [dependencies]
 async-openai = { git = "https://git.woa.com/yuanbao-multimodal/async-openai.git", rev = "78d5540", features = ["chat-completion"] }
 async-stream = "0.3.6"
 async-trait = "0.1.88"
 futures = "0.3.31"
-moray-channels.workspace = true
-moray-core.workspace = true
-moray-skills.workspace = true
-moray-session.workspace = true
+nova-core.workspace = true
 serde = { version = "1.0.219", features = ["derive"], optional = true }
 serde_json = "1.0.140"
 thiserror = "2.0.12"
 tokio = { version = "1.44.2", features = ["sync", "rt", "macros", "fs", "process", "time"] }
-tokio-stream = "0.1.17"
 tokio-util = "0.7"
-tokio-tungstenite = { version = "0.26.2", features = ["rustls-tls-webpki-roots"] }
-tracing = "0.1"
-regex = "1.11.1"
 toml = "0.8"
-reqwest = { version = "0.12.15", default-features = false, features = ["json", "multipart", "rustls-tls"] }
-uuid = { version = "1", features = ["v4"] }
-base64 = "0.22"
-aes = "0.8"
-cbc = "0.1"
-futures-util = "0.3.31"
+tracing = "0.1"
 
 [dev-dependencies]
 tempfile = "3"

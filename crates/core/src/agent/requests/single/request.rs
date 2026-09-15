@@ -9,7 +9,7 @@ use crate::agent::requests::single::AgentEventSink;
 use crate::completion::ChatCompletion;
 use crate::context::ContextEngine;
 use crate::toolbox::Toolbox;
-use crate::types::MorayError;
+use crate::types::NovaError;
 
 const DEFAULT_MAX_ROUNDS: usize = 10;
 
@@ -74,14 +74,14 @@ impl AgentRequestBuilder {
     pub fn run(
         self,
         sink: Arc<dyn AgentEventSink>,
-    ) -> std::result::Result<JoinHandle<std::result::Result<(), MorayError>>, MorayError> {
+    ) -> std::result::Result<JoinHandle<std::result::Result<(), NovaError>>, NovaError> {
         let Some(completion) = self.completion else {
-            return Err(MorayError::Message(
+            return Err(NovaError::Message(
                 "AgentRequestBuilder: missing required `completion`".into(),
             ));
         };
         let Some(context) = self.context else {
-            return Err(MorayError::Message(
+            return Err(NovaError::Message(
                 "AgentRequestBuilder: missing required `context`".into(),
             ));
         };
@@ -89,7 +89,11 @@ impl AgentRequestBuilder {
         let toolbox = self.toolbox.unwrap_or_else(empty_toolbox);
         let cancellation = self.cancellation.unwrap_or_default();
 
-        info!(stream = self.stream, max_rounds = self.max_rounds, "agent request started");
+        info!(
+            stream = self.stream,
+            max_rounds = self.max_rounds,
+            "agent request started"
+        );
         Ok(tokio::spawn(
             async move {
                 react::run(

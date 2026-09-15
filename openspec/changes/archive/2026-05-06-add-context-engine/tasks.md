@@ -10,7 +10,7 @@
 - [x] 1.8 Enforce strict resume state at session boundary (`Session::resume` returns explicit error when state is not resumable).
 - [x] 1.9 Update `SessionHarnessFactory`/demo harness wiring so store is bound at harness construction and `create_context_engine()` no longer takes per-run store input.
 - [x] 1.10 In demo chat flow, keep JSONL-backed persistence + context assembly behavior and preserve system-message ordering.
-- [x] 1.11 Verify with `cargo test -p moray-core` and `cargo test -p demo`.
+- [x] 1.11 Verify with `cargo test -p nova-core` and `cargo test -p demo`.
 
 ## 2. Documentation
 

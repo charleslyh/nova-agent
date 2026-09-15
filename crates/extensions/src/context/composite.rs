@@ -3,9 +3,7 @@
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
-use moray_core::{
-    ChatCompletionRequestMessage, ContextEngine, MorayError, ToolManifest,
-};
+use nova_core::{ChatCompletionRequestMessage, ContextEngine, NovaError, ToolManifest};
 
 use super::preamble::PreambleProvider;
 
@@ -23,7 +21,7 @@ pub trait ContextPipelineNode: Send + Sync {
         _tools: &[ToolManifest],
         _preamble: Option<&str>,
         _transcript: &[ChatCompletionRequestMessage],
-    ) -> Result<(), MorayError> {
+    ) -> Result<(), NovaError> {
         Ok(())
     }
 
@@ -36,18 +34,15 @@ pub trait ContextPipelineNode: Send + Sync {
         // error recovery and write-back to the engine store.
         transcript: &mut Vec<ChatCompletionRequestMessage>,
         tools: &[ToolManifest],
-    ) -> Result<(), MorayError>;
+    ) -> Result<(), NovaError>;
 
     /// Notified after new messages are appended to the transcript. Read-only: nodes MUST NOT
     /// mutate the store here; compaction and other transforms belong in [`Self::process`].
-    fn on_ingest(
-        &self,
-        _ingested: &[ChatCompletionRequestMessage],
-    ) -> Result<(), MorayError> {
+    fn on_ingest(&self, _ingested: &[ChatCompletionRequestMessage]) -> Result<(), NovaError> {
         Ok(())
     }
 
-    fn teardown(&self) -> Result<(), MorayError> {
+    fn teardown(&self) -> Result<(), NovaError> {
         Ok(())
     }
 }
@@ -76,8 +71,7 @@ impl CompositeContextEngineBuilder {
 
     pub fn messages(mut self, messages: Vec<ChatCompletionRequestMessage>) -> Self {
         #[cfg(debug_assertions)]
-        ensure_transcript_messages(&messages)
-            .expect("CompositeContextEngineBuilder::messages");
+        ensure_transcript_messages(&messages).expect("CompositeContextEngineBuilder::messages");
         self.messages = messages;
         self
     }
@@ -109,7 +103,7 @@ impl CompositeContextEngineBuilder {
 
 #[async_trait]
 impl ContextEngine for CompositeContextEngine {
-    async fn setup(&self, tools: &[ToolManifest]) -> Result<(), MorayError> {
+    async fn setup(&self, tools: &[ToolManifest]) -> Result<(), NovaError> {
         let transcript = self.transcript.read().map_err(|_| lock_err())?;
 
         // Generate and freeze the system prompt for the current agent run.
@@ -121,10 +115,7 @@ impl ContextEngine for CompositeContextEngine {
                 .map_err(|_| preamble_lock_err())? = Some(content);
         }
 
-        let preamble_guard = self
-            .turn_preamble
-            .read()
-            .map_err(|_| preamble_lock_err())?;
+        let preamble_guard = self.turn_preamble.read().map_err(|_| preamble_lock_err())?;
         let preamble = preamble_guard.as_deref();
 
         // Give all pipeline nodes a chance to setup. Such as calculating tokens, etc.
@@ -138,7 +129,7 @@ impl ContextEngine for CompositeContextEngine {
     async fn assemble(
         &self,
         tools: &[ToolManifest],
-    ) -> Result<Vec<ChatCompletionRequestMessage>, MorayError> {
+    ) -> Result<Vec<ChatCompletionRequestMessage>, NovaError> {
         let mut guard = self.transcript.write().map_err(|_| lock_err())?;
         let mut transcript = std::mem::take(&mut *guard);
         #[cfg(debug_assertions)]
@@ -153,27 +144,17 @@ impl ContextEngine for CompositeContextEngine {
 
         *guard = transcript.clone();
 
-        if let Some(preamble) = self
-            .turn_preamble
-            .read()
-            .ok()
-            .and_then(|p| p.clone())
-        {
+        if let Some(preamble) = self.turn_preamble.read().ok().and_then(|p| p.clone()) {
             transcript.insert(
                 0,
-                ChatCompletionRequestMessage::System {
-                    content: preamble,
-                },
+                ChatCompletionRequestMessage::System { content: preamble },
             );
         }
 
         Ok(transcript)
     }
 
-    async fn ingest(
-        &self,
-        messages: Vec<ChatCompletionRequestMessage>,
-    ) -> Result<(), MorayError> {
+    async fn ingest(&self, messages: Vec<ChatCompletionRequestMessage>) -> Result<(), NovaError> {
         #[cfg(debug_assertions)]
         ensure_transcript_messages(&messages)?;
 
@@ -190,7 +171,7 @@ impl ContextEngine for CompositeContextEngine {
         Ok(())
     }
 
-    async fn teardown(&self) -> Result<(), MorayError> {
+    async fn teardown(&self) -> Result<(), NovaError> {
         for node in self.pipeline.iter().rev() {
             node.teardown()?;
         }
@@ -203,7 +184,7 @@ impl ContextEngine for CompositeContextEngine {
         Ok(())
     }
 
-    async fn clear(&self) -> Result<(), MorayError> {
+    async fn clear(&self) -> Result<(), NovaError> {
         self.transcript.write().map_err(|_| lock_err())?.clear();
         Ok(())
     }
@@ -219,29 +200,29 @@ const TRANSCRIPT_NO_SYSTEM_MSG: &str =
 
 /// Transcript must be user / assistant / tool only; turn preamble is prepended at assemble.
 #[cfg(debug_assertions)]
-fn ensure_transcript_messages(messages: &[ChatCompletionRequestMessage]) -> Result<(), MorayError> {
+fn ensure_transcript_messages(messages: &[ChatCompletionRequestMessage]) -> Result<(), NovaError> {
     if messages
         .iter()
         .any(|m| matches!(m, ChatCompletionRequestMessage::System { .. }))
     {
-        return Err(MorayError::Message(TRANSCRIPT_NO_SYSTEM_MSG.into()));
+        return Err(NovaError::Message(TRANSCRIPT_NO_SYSTEM_MSG.into()));
     }
     Ok(())
 }
 
-fn lock_err() -> MorayError {
-    MorayError::Message("CompositeContextEngine transcript lock poisoned".into())
+fn lock_err() -> NovaError {
+    NovaError::Message("CompositeContextEngine transcript lock poisoned".into())
 }
 
-fn preamble_lock_err() -> MorayError {
-    MorayError::Message("CompositeContextEngine turn_preamble lock poisoned".into())
+fn preamble_lock_err() -> NovaError {
+    NovaError::Message("CompositeContextEngine turn_preamble lock poisoned".into())
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use moray_core::ChatCompletionRequestMessage;
+    use nova_core::ChatCompletionRequestMessage;
 
     use crate::preambles::TemplatedPreamblerBuilder;
 
@@ -270,7 +251,10 @@ mod tests {
 
         let store = engine.transcript.read().expect("read");
         assert_eq!(store.len(), 1);
-        assert!(matches!(store[0], ChatCompletionRequestMessage::User { .. }));
+        assert!(matches!(
+            store[0],
+            ChatCompletionRequestMessage::User { .. }
+        ));
     }
 
     #[test]
@@ -303,7 +287,7 @@ mod tests {
             .expect_err("ingest");
         assert!(matches!(
             err,
-            MorayError::Message(ref m) if m == TRANSCRIPT_NO_SYSTEM_MSG
+            NovaError::Message(ref m) if m == TRANSCRIPT_NO_SYSTEM_MSG
         ));
     }
 
@@ -319,7 +303,7 @@ mod tests {
             _tools: &[ToolManifest],
             preamble: Option<&str>,
             _transcript: &[ChatCompletionRequestMessage],
-        ) -> Result<(), MorayError> {
+        ) -> Result<(), NovaError> {
             self.setup_calls.fetch_add(1, Ordering::SeqCst);
             assert!(preamble.is_none());
             Ok(())
@@ -329,19 +313,16 @@ mod tests {
             &self,
             _transcript: &mut Vec<ChatCompletionRequestMessage>,
             _tools: &[ToolManifest],
-        ) -> Result<(), MorayError> {
+        ) -> Result<(), NovaError> {
             Ok(())
         }
 
-        fn on_ingest(
-            &self,
-            _ingested: &[ChatCompletionRequestMessage],
-        ) -> Result<(), MorayError> {
+        fn on_ingest(&self, _ingested: &[ChatCompletionRequestMessage]) -> Result<(), NovaError> {
             self.ingest_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
 
-        fn teardown(&self) -> Result<(), MorayError> {
+        fn teardown(&self) -> Result<(), NovaError> {
             self.teardown_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -378,7 +359,9 @@ mod tests {
             teardown_calls: AtomicUsize::new(0),
             ingest_calls: AtomicUsize::new(0),
         });
-        let engine = CompositeContextEngineBuilder::new().node(node.clone()).build();
+        let engine = CompositeContextEngineBuilder::new()
+            .node(node.clone())
+            .build();
         engine
             .ingest(vec![ChatCompletionRequestMessage::User {
                 content: "hi".into(),
@@ -397,7 +380,9 @@ mod tests {
         let preambler = Arc::new(
             TemplatedPreamblerBuilder::new()
                 .template("## Character\n\n{{character}}\n")
-                .subst_dyn("character", move || current_in_fn.read().expect("lock").clone())
+                .subst_dyn("character", move || {
+                    current_in_fn.read().expect("lock").clone()
+                })
                 .build(),
         );
         let engine = CompositeContextEngineBuilder::new()
@@ -411,7 +396,8 @@ mod tests {
         let first = engine.assemble(&[]).await.expect("assemble 1");
         let second = engine.assemble(&[]).await.expect("assemble 2");
         let system_content = |msgs: &[ChatCompletionRequestMessage]| {
-            let ChatCompletionRequestMessage::System { content } = msgs.first().expect("system") else {
+            let ChatCompletionRequestMessage::System { content } = msgs.first().expect("system")
+            else {
                 panic!("expected system");
             };
             content.clone()

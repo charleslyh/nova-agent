@@ -1,22 +1,22 @@
 ## Context
-`Agent` in `moray-core` already provides recoverable invoke/resume semantics via `AgentInvokeEvent`. However, orchestration concerns (loading history, constructing agents from history, appending events, reset flow, and interactive delegation) currently live in `demo/examples/chat.rs`.
+`Agent` in `nova-core` already provides recoverable invoke/resume semantics via `AgentInvokeEvent`. However, orchestration concerns (loading history, constructing agents from history, appending events, reset flow, and interactive delegation) currently live in `demo/examples/chat.rs`.
 
-The new design introduces a small session layer inside `moray-core` so orchestration can be reused while keeping `Agent` as the state-machine core.
+The new design introduces a small session layer inside `nova-core` so orchestration can be reused while keeping `Agent` as the state-machine core.
 
 ## Goals / Non-Goals
 - Goals:
-  - Introduce a `Session` abstraction in `moray-core` that manages `store` and `agent` lifecycle.
+  - Introduce a `Session` abstraction in `nova-core` that manages `store` and `agent` lifecycle.
   - Introduce `SessionEvent` with explicit session lifecycle events and `AgentEvent { event: AgentInvokeEvent }` passthrough.
   - Extract session-related logic from `chat` while preserving transcript behavior.
 - Non-Goals:
-  - No new `moray-session` crate in this change.
+  - No new `nova-session` crate in this change.
   - No redesign of `AgentInvokeEvent` schema.
   - No transcript format migration.
 
 ## Decisions
-### Decision: Keep session inside `moray-core` as a module
+### Decision: Keep session inside `nova-core` as a module
 - Rationale: smallest scope and lowest migration risk while making orchestration reusable.
-- Alternative considered: a new `moray-session` crate.
+- Alternative considered: a new `nova-session` crate.
   - Rejected for now to avoid package-level churn before API stabilizes.
 
 ### Decision: Keep `Session` constructor minimal (`store` + prebuilt `agent`)

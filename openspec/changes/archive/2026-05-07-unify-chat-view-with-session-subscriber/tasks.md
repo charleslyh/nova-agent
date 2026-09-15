@@ -18,4 +18,4 @@
 
 - [x] 3.1 Subscriber-boundary correctness is covered by transcript-store tests (`subscribers_receive_same_future_events`, `subscriber_does_not_receive_events_below_start_seq`); demo `chat.rs` keeps replay (`view.replay`) and live rendering (`process_next_session_event`) on disjoint paths so duplicate replay rendering is structurally avoided.
 - [x] 3.2 `subscribers_receive_same_future_events` exercises the `SessionStore::append` → subscriber render path through `JsonlTranscriptStore`; `session_cancel.rs` continues to validate that detached `post` runs persist agent events through the same store, which now also drives subscribers.
-- [x] 3.3 `cargo test --workspace` runs green for `moray-core`, `moray-builtin`, `moray-sessions`, and `demo`, including the new subscriber tests.
+- [x] 3.3 `cargo test --workspace` runs green for `nova-core`, `nova-builtin`, `nova-sessions`, and `demo`, including the new subscriber tests.

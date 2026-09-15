@@ -1,6 +1,6 @@
 ## Context
 
-Moray has Rust-side `moray-core` and `moray-sessions` abstractions for recoverable conversation flow, including streaming session events and tool authorization replies. We want to (1) validate that this runtime design is reasonable behind a real network boundary and (2) ship a cross-platform desktop chat surface for the same single-session model.
+Nova has Rust-side `nova-core` and `nova-sessions` abstractions for recoverable conversation flow, including streaming session events and tool authorization replies. We want to (1) validate that this runtime design is reasonable behind a real network boundary and (2) ship a cross-platform desktop chat surface for the same single-session model.
 
 The simplest way to do both is to drive the runtime through an HTTP service and let the desktop app consume that service. The desktop side needs a native window, packaging, and OS-level controls, which Tauri handles well; the chat domain itself stays on the HTTP service so it can also be exercised independently.
 
@@ -10,24 +10,24 @@ We dedicate a new top-level `desktop/` directory to the cross-platform desktop a
 - `desktop/client` — Tauri v2 desktop client / shell
 - `desktop/web` — Vue 3 web app rendered inside the desktop window
 
-Separately, we introduce `moray-builtin` at the repo root: a small Rust package of "batteries-included" building blocks that are too app-flavored to live in `moray-core` / `moray-sessions` but are obviously reusable across `demo/` and `desktop/server`. The first occupants are `JsonlTranscriptStore` (migrated from `demo/`) and a new `CalcTool`.
+Separately, we introduce `nova-builtin` at the repo root: a small Rust package of "batteries-included" building blocks that are too app-flavored to live in `nova-core` / `nova-sessions` but are obviously reusable across `demo/` and `desktop/server`. The first occupants are `JsonlTranscriptStore` (migrated from `demo/`) and a new `CalcTool`.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- One in-process `axum` HTTP service at `desktop/server` that exposes chat behavior for one active session by composing `moray-core` + `moray-sessions` + `moray-builtin`.
+- One in-process `axum` HTTP service at `desktop/server` that exposes chat behavior for one active session by composing `nova-core` + `nova-sessions` + `nova-builtin`.
 - One Tauri v2 desktop client at `desktop/client` that opens the window, hosts the web app's assets, and manages `desktop/server`'s lifecycle as a Tokio task in the same process.
 - One Vue 3 web app at `desktop/web`, written in plain JavaScript with Vite + pnpm, that uses a dedicated `ChatClient` abstraction for chat behavior with an HTTP / SSE implementation as the initial transport.
 - Make it possible to later replace the HTTP `ChatClient` implementation with a Tauri-command implementation without changing UI components.
 - Keep the web app's chat-state derived from server-emitted events rather than duplicating runtime execution logic in the UI.
-- Introduce a new `moray-builtin` package providing `JsonlTranscriptStore` (migrated from `demo/`) and a new `CalcTool` (double-stack four-arithmetic calculator) wired with an `AskUser` authorization policy.
+- Introduce a new `nova-builtin` package providing `JsonlTranscriptStore` (migrated from `demo/`) and a new `CalcTool` (double-stack four-arithmetic calculator) wired with an `AskUser` authorization policy.
 - Provide a local development path and build verification for all three desktop sub-apps and the new builtin package.
 
 **Non-Goals:**
 - Multi-session creation, switching, deletion, or session list UI.
 - User accounts, cloud sync, or remote server deployment.
 - Hardening `desktop/server` for public exposure (auth, TLS termination, rate limits).
-- Redesigning `moray-core`, transcript storage semantics, or agent semantics.
+- Redesigning `nova-core`, transcript storage semantics, or agent semantics.
 - Writing the Tauri-command-backed `ChatClient` implementation in this change (only the abstraction must support it).
 - Changing the demo's externally observable chat behavior (only its store import path changes).
 
@@ -41,7 +41,7 @@ Separately, we introduce `moray-builtin` at the repo root: a small Rust package 
     - Embed everything in an existing crate folder: rejected because reusable runtime crates should not host application packaging.
 
 - Decision: Make `desktop/server` the chat boundary.
-  - Rationale: A real HTTP boundary forces the `moray-core` + `moray-sessions` design through an external API and is what we want to validate; it also gives `desktop/web` a transport that does not depend on Tauri.
+  - Rationale: A real HTTP boundary forces the `nova-core` + `nova-sessions` design through an external API and is what we want to validate; it also gives `desktop/web` a transport that does not depend on Tauri.
   - Alternatives considered:
     - Drive chat behavior directly from Tauri commands first: rejected because it would not validate the HTTP-shaped boundary the runtime is meant to support.
     - Embed the runtime entirely in the web app: rejected because the runtime is Rust and authority should not move into the UI.
@@ -91,17 +91,17 @@ Separately, we introduce `moray-builtin` at the repo root: a small Rust package 
     - Two endpoints (`GET /transcript` + `GET /events`): rejected because clients must implement an explicit `LOADING_HISTORY → SUBSCRIBING → LIVE` state machine and ensure no event is dropped between the two calls.
 
 - Decision: The web app does not respond to tool authorization requests during the replay phase.
-  - Rationale: `Blocked` events that appear in replay either have already been resolved by a later persisted event or will be re-surfaced naturally on the live tail when `moray-sessions` resumes the active turn. Re-prompting users for historical authorization would be a confusing UX.
+  - Rationale: `Blocked` events that appear in replay either have already been resolved by a later persisted event or will be re-surfaced naturally on the live tail when `nova-sessions` resumes the active turn. Re-prompting users for historical authorization would be a confusing UX.
   - Implementation: the web app distinguishes phases by the SSE event name (`replay` vs `live`); only `live`-phase events trigger authorization UI.
 
 - Decision: Resume on startup.
-  - Rationale: One of the points of validating `moray-core` + `moray-sessions` over HTTP is exercising the recovery flow. Starting fresh would short-circuit a major part of the design we want to test.
+  - Rationale: One of the points of validating `nova-core` + `nova-sessions` over HTTP is exercising the recovery flow. Starting fresh would short-circuit a major part of the design we want to test.
   - Implementation: server initializes its single `ChatSession` with the same JSONL transcript path used by demo (configurable via env), so app launches always continue from persisted history; the web app subscribes from `from_seq=0` on first load and from `Last-Event-ID + 1` on reconnect.
 
 - Decision: HTTP error wire format is a small JSON envelope.
   - Rationale: A simple, predictable shape is sufficient for a local app.
   - Shape: `{ "code": "BUSY" | "NOT_FOUND" | "BAD_REQUEST" | "INTERNAL", "message": "..." }`.
-  - Status mapping: `MorayError::Busy → 409 Conflict`; reply with unknown `call_id → 404`; malformed payload `→ 400`; everything else `→ 500`.
+  - Status mapping: `NovaError::Busy → 409 Conflict`; reply with unknown `call_id → 404`; malformed payload `→ 400`; everything else `→ 500`.
   - Alternatives considered:
     - RFC 7807 `application/problem+json`: rejected as overhead for a local-only API.
 
@@ -110,11 +110,11 @@ Separately, we introduce `moray-builtin` at the repo root: a small Rust package 
   - Implementation:
     - The root `Cargo.toml` adds `exclude = ["desktop"]`.
     - `desktop/Cargo.toml` is its own workspace with members `server` and `client/src-tauri`.
-    - `desktop/server` and `desktop/client/src-tauri` reference `moray-core`, `moray-sessions`, and `moray-builtin` via `path = "../../<crate>"`.
+    - `desktop/server` and `desktop/client/src-tauri` reference `nova-core`, `nova-sessions`, and `nova-builtin` via `path = "../../<crate>"`.
 
-- Decision: Package names follow the existing `moray-` prefix convention.
-  - Rationale: Consistency with `moray-core`, `moray-sessions`, `moray-builtin`.
-  - Choices: Rust crates `moray-desktop-server`, `moray-desktop-client`; web app package `@moray/desktop-web` (pnpm-only, not published).
+- Decision: Package names follow the existing `nova-` prefix convention.
+  - Rationale: Consistency with `nova-core`, `nova-sessions`, `nova-builtin`.
+  - Choices: Rust crates `nova-desktop-server`, `nova-desktop-client`; web app package `@nova/desktop-web` (pnpm-only, not published).
 
 - Decision: Web stack is Vue 3 + Vite + pnpm in plain JavaScript (no TypeScript), with no UI framework.
   - Rationale: First app should validate the chat loop, not solve general application shell, settings, routing, or multi-page navigation. Plain JavaScript keeps the toolchain minimal; reactive `ref` is enough state management.
@@ -122,13 +122,13 @@ Separately, we introduce `moray-builtin` at the repo root: a small Rust package 
     - TypeScript: rejected for this initial change to keep the surface small; can be revisited.
     - Adopt a UI framework (Naive UI / Element Plus / etc.): rejected as not needed for the minimal surface.
 
-- Decision: Introduce a new `moray-builtin` Rust package at the workspace root for reusable building blocks.
-  - Rationale: `JsonlTranscriptStore` is a `moray-sessions`-compatible store that both `demo/` and `desktop/server` need to share; keeping it inside `demo/` would force `desktop/server` to depend on `demo/`, which is wrong. A new "batteries-included" package is also a natural home for the new `CalcTool`.
+- Decision: Introduce a new `nova-builtin` Rust package at the workspace root for reusable building blocks.
+  - Rationale: `JsonlTranscriptStore` is a `nova-sessions`-compatible store that both `demo/` and `desktop/server` need to share; keeping it inside `demo/` would force `desktop/server` to depend on `demo/`, which is wrong. A new "batteries-included" package is also a natural home for the new `CalcTool`.
   - Initial contents:
-    - `moray_builtin::stores::JsonlTranscriptStore` — migrated from `demo/src/transcript.rs`; behavior unchanged; `demo` updates its imports.
-    - `moray_builtin::tools::CalcTool` — new; double-stack arithmetic supporting `+ - * /` with operator precedence; gated by an `AskUser` authorization policy so the desktop app exercises the full authorization flow.
+    - `nova_builtin::stores::JsonlTranscriptStore` — migrated from `demo/src/transcript.rs`; behavior unchanged; `demo` updates its imports.
+    - `nova_builtin::tools::CalcTool` — new; double-stack arithmetic supporting `+ - * /` with operator precedence; gated by an `AskUser` authorization policy so the desktop app exercises the full authorization flow.
   - Naming alternatives considered:
-    - `moray-prelude` / `moray-extras` / `moray-toolkit`: all viable; `moray-builtin` chosen because it most clearly conveys "official, ready-to-use building blocks".
+    - `nova-prelude` / `nova-extras` / `nova-toolkit`: all viable; `nova-builtin` chosen because it most clearly conveys "official, ready-to-use building blocks".
 
 - Decision: `CalcTool` JSON shapes.
   - Input: `{ "expression": "1+2*3" }` (string in any whitespace).
@@ -152,19 +152,19 @@ Separately, we introduce `moray-builtin` at the repo root: a small Rust package 
 
 ## Migration Plan
 
-1. Introduce `moray-builtin`:
+1. Introduce `nova-builtin`:
    1. Create `builtin/` Rust crate at the workspace root; add it as a member of the root workspace.
-   2. Move `JsonlTranscriptStore` from `demo/src/transcript.rs` to `moray-builtin::stores`; delete the old copy and re-export from `demo` if convenient, or update demo's imports directly.
-   3. Add `moray-builtin::tools::CalcTool` with the JSON shapes above and an `AskUser` policy.
+   2. Move `JsonlTranscriptStore` from `demo/src/transcript.rs` to `nova-builtin::stores`; delete the old copy and re-export from `demo` if convenient, or update demo's imports directly.
+   3. Add `nova-builtin::tools::CalcTool` with the JSON shapes above and an `AskUser` policy.
 2. Set up the `desktop/` workspace:
    1. Add `exclude = ["desktop"]` in the root `Cargo.toml`.
    2. Create `desktop/Cargo.toml` as its own workspace with `server` and `client/src-tauri` as members.
-   3. Reference `moray-core`, `moray-sessions`, `moray-builtin` via `path` deps.
+   3. Reference `nova-core`, `nova-sessions`, `nova-builtin` via `path` deps.
 3. Implement `desktop/server` as a lib:
-   1. `start(opts) -> ServerHandle` builds the axum router around a single `ChatSession` (constructed from harness + `JsonlTranscriptStore` from `moray-builtin`).
+   1. `start(opts) -> ServerHandle` builds the axum router around a single `ChatSession` (constructed from harness + `JsonlTranscriptStore` from `nova-builtin`).
    2. Implement endpoints: `POST /messages`, `POST /tool-authorizations/:call_id`, `POST /reset`, `GET /events?from_seq=N`.
    3. Wire SSE named events `replay` / `live-start` / `live` per the order in *Decisions*.
-   4. Map `MorayError::Busy → 409`, unknown `call_id → 404`, etc., per error wire format.
+   4. Map `NovaError::Busy → 409`, unknown `call_id → 404`, etc., per error wire format.
 4. Implement `desktop/client`:
    1. Spawn `desktop/server` from the Tauri `setup` hook; manage the handle in Tauri state.
    2. Expose `get_server_url` Tauri command.

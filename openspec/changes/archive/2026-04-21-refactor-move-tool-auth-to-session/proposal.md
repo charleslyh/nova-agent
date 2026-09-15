@@ -2,7 +2,7 @@
 
 Tool-call authorization is currently entangled inside **`Agent`**: the agent owns the pending-auth map, emits **`AssistantToolCallAuthorizationRequired`**, and exposes **`Agent::reply_tool_auth`**. This mixes two concerns in the ReAct loop — model-turn correctness (completion rounds, message history, tool invocation) and harness-controlled policy (who grants permission, how the UI is prompted) — and forces **`Session`** to proxy auth replies into the agent despite owning the user-facing lifecycle.
 
-Moving authorization into the **`Toolbox`** orbit (with the trait surface staying invisible to the rest of `moray-core`) produces the cleanest separation:
+Moving authorization into the **`Toolbox`** orbit (with the trait surface staying invisible to the rest of `nova-core`) produces the cleanest separation:
 
 - the agent just drives completions and forwards the toolbox lifecycle stream;
 - the toolbox is the single integration point with the authorization policy and is the sole producer of authorization-related lifecycle events. It also owns the pending-request state (the `oneshot` map keyed by `call_id`) that backs `AskUser` decisions;
@@ -15,15 +15,15 @@ The project has no external API, persistence, or version compatibility to preser
 
 ## What Changes
 
-- Remove all tool-authorization logic from **`moray_core::Agent`**:
+- Remove all tool-authorization logic from **`nova_core::Agent`**:
   - Drop **`AgentRunResponseMessage::AssistantToolCallAuthorizationRequired`**.
   - Drop **`Agent::reply_tool_auth`**, **`AuthState`**, pending **`oneshot`** maps, and the auth sub-stream inside **`agent.rs`**.
   - Flatten `AgentRunResponseMessage` to exactly three variants — `ChatResponse { chunk }`, `ToolCall { event: ToolboxEvent }`, `Finished { kind }`. The agent forwards the toolbox lifecycle stream verbatim as the `ToolCall` variant; downstream consumers correlate with the preceding `ChatResponse(ToolCall { call_id, name, arguments })` chunk to recover tool name / arguments when needed (e.g. for rendering an authorization prompt).
-- Introduce a **`ToolCallAuthPolicy`** trait in **`moray-core`** with **two** methods:
+- Introduce a **`ToolCallAuthPolicy`** trait in **`nova-core`** with **two** methods:
   - `async fn decide(&self, call_id, tool_name, arguments) -> AuthDecision`
   - `async fn reply(&self, call_id, data: serde_json::Value) -> bool`
 
-  where `AuthDecision` is `Allow | Deny | AskUser { data: Option<serde_json::Value> }`. `decide` returns the gating verdict; when it returns `AskUser`, the toolbox carries `data` out to the UI inside `RequestingPermission`. When the UI replies, the toolbox forwards the raw reply payload (`Value`) to `reply`; the policy interprets it into a final allow / deny **and MAY cache / persist the outcome** before returning. `moray-core` does NOT ship a concrete implementation; consumers (demo, tests, production harnesses) provide their own.
+  where `AuthDecision` is `Allow | Deny | AskUser { data: Option<serde_json::Value> }`. `decide` returns the gating verdict; when it returns `AskUser`, the toolbox carries `data` out to the UI inside `RequestingPermission`. When the UI replies, the toolbox forwards the raw reply payload (`Value`) to `reply`; the policy interprets it into a final allow / deny **and MAY cache / persist the outcome** before returning. `nova-core` does NOT ship a concrete implementation; consumers (demo, tests, production harnesses) provide their own.
 - Rework **`Toolbox`** as the single owner of both the policy and the pending-authorization state:
   - `Toolbox::new(tools, Arc<dyn ToolCallAuthPolicy + Send + Sync>)` binds the policy at construction; `ToolboxBuilder::build(policy)` mirrors the same shape.
   - The toolbox internally owns the `oneshot` map keyed by `call_id` that backs `AskUser` flows.
@@ -50,7 +50,7 @@ The project has no external API, persistence, or version compatibility to preser
 
 ## Impact
 
-- **Affected specs:** `moray-core`, `moray-demos`
+- **Affected specs:** `nova-core`, `nova-demos`
 - **Affected code:**
   - `core/src/agent.rs` (heavy simplification; no authorization state; lifecycle stream forwarded verbatim as the `ToolCall` variant)
   - `core/src/agent_run.rs` (drop `AssistantToolCallAuthorizationRequired`; flatten to `ChatResponse` / `ToolCall { event: ToolboxEvent }` / `Finished`; `Eq` dropped because `ToolboxEvent` nests `Option<Value>`)

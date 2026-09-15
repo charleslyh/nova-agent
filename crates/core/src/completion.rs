@@ -5,7 +5,7 @@ use std::pin::Pin;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::types::MorayError;
+use crate::types::NovaError;
 use crate::types::{ToolCallRequest, ToolManifest};
 
 /// One message in the completion context.
@@ -35,7 +35,7 @@ pub enum ChatCompletionRequestMessage {
 
 /// Why the model stopped generating this completion round.
 ///
-/// This is a **semantic** summary for moray, not a wire-format mirror. In particular, a model round that
+/// This is a **semantic** summary for nova, not a wire-format mirror. In particular, a model round that
 /// ends because tools should run is already expressed by [`ChatCompletionResponseChunk::ToolCall`] items
 /// before [`ChatCompletionResponseChunk::Done`]; adapters map wire `finish_reason: "tool_calls"` to [`Stop`](Self::Stop).
 ///
@@ -116,7 +116,7 @@ pub trait ChatCompletion: Send + Sync {
         tools: &[ToolManifest],
         stream: bool,
     ) -> Result<
-        Pin<Box<dyn Stream<Item = Result<ChatCompletionResponseChunk, MorayError>> + Send>>,
-        MorayError,
+        Pin<Box<dyn Stream<Item = Result<ChatCompletionResponseChunk, NovaError>> + Send>>,
+        NovaError,
     >;
 }

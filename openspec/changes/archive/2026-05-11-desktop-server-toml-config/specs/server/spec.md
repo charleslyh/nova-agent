@@ -2,9 +2,9 @@
 
 ### Requirement: Completion settings are loaded from a TOML file
 
-The `desktop/server` library SHALL define a canonical configuration file path under the user's Moray data directory (`$HOME/.moray/` when `HOME` is set, using the same directory convention as other desktop artifacts such as the JSONL transcript), SHALL expose a public API to load from that default path, and SHALL expose a public API to load from a caller-provided filesystem path for tests and advanced use.
+The `desktop/server` library SHALL define a canonical configuration file path under the user's Nova data directory (`$HOME/.nova/` when `HOME` is set, using the same directory convention as other desktop artifacts such as the JSONL transcript), SHALL expose a public API to load from that default path, and SHALL expose a public API to load from a caller-provided filesystem path for tests and advanced use.
 
-The on-disk TOML SHALL separate **credentials** from **capabilities** using distinct top-level tables: **`[credentials]`** (at least `api_key`, `base_url`, `model`) and **`[capabilities]`** (fields mapping to `moray_core::ChatCompletionCapabilities`, including **`prefill_supported`**). The **`[capabilities]`** table MAY be omitted; when omitted, capabilities MUST default such that **`prefill_supported` is false**.
+The on-disk TOML SHALL separate **credentials** from **capabilities** using distinct top-level tables: **`[credentials]`** (at least `api_key`, `base_url`, `model`) and **`[capabilities]`** (fields mapping to `nova_core::ChatCompletionCapabilities`, including **`prefill_supported`**). The **`[capabilities]`** table MAY be omitted; when omitted, capabilities MUST default such that **`prefill_supported` is false**.
 
 The resolved in-memory value suitable for starting the HTTP server MUST contain non-empty `api_key`, `base_url`, and `model` strings after resolution, and MUST contain a **`ChatCompletionCapabilities`** value derived from `[capabilities]` or defaults.
 
@@ -20,11 +20,11 @@ The library MAY expose **`load_config`** / **`load_config_from`** for parsing an
 - **THEN** the implementation MUST read and resolve that file before accepting HTTP connections
 - **AND** the server MUST use the resolved credentials and capabilities for the active session's completion adapter
 
-#### Scenario: Default config path lives next to other ~/.moray artifacts
+#### Scenario: Default config path lives next to other ~/.nova artifacts
 
 - **WHEN** the library resolves the default configuration file path on a system where `HOME` is set
-- **THEN** the path MUST be under `$HOME/.moray/` with a fixed filename chosen by `desktop/server`
-- **AND** that directory MUST be the same logical location used for other Moray desktop user data (including the hardcoded JSONL transcript path pattern)
+- **THEN** the path MUST be under `$HOME/.nova/` with a fixed filename chosen by `desktop/server`
+- **AND** that directory MUST be the same logical location used for other Nova desktop user data (including the hardcoded JSONL transcript path pattern)
 
 #### Scenario: Literal api key in TOML
 
@@ -51,25 +51,25 @@ The library MAY expose **`load_config`** / **`load_config_from`** for parsing an
 
 ### Requirement: JSONL transcript path is not user-configurable
 
-The server SHALL persist and resume the single active session using a JSONL transcript file at a path computed only by library code (not from TOML, not from `MORAY_DESKTOP_TRANSCRIPT_PATH`, and not from removed `ServerOptions` fields), using the same directory and filename rules as the previous default user-level path when `HOME` is set.
+The server SHALL persist and resume the single active session using a JSONL transcript file at a path computed only by library code (not from TOML, not from `NOVA_DESKTOP_TRANSCRIPT_PATH`, and not from removed `ServerOptions` fields), using the same directory and filename rules as the previous default user-level path when `HOME` is set.
 
 #### Scenario: Transcript location ignores TOML and removed env
 
 - **WHEN** the server constructs `JsonlTranscriptStore`
 - **THEN** the transcript path MUST be derived solely from the hardcoded library function
 - **AND** the path MUST NOT be read from the TOML configuration file
-- **AND** the path MUST NOT be read from `MORAY_DESKTOP_TRANSCRIPT_PATH`
+- **AND** the path MUST NOT be read from `NOVA_DESKTOP_TRANSCRIPT_PATH`
 
 ### Requirement: ServerHarness uses resolved configuration for completion
 
 The server's `Harness` implementation type SHALL be constructed with the resolved configuration object (or an equivalent immutable snapshot of its fields) and SHALL supply `OpenAIChatCompletion` parameters from that object only, including **`ChatCompletionCapabilities`** derived from the `[capabilities]` table or defaults.
 
-#### Scenario: Completion parameters do not fall back to MORAY_OPENAI_* for file-based startup
+#### Scenario: Completion parameters do not fall back to NOVA_OPENAI_* for file-based startup
 
 - **WHEN** the server builds `OpenAIChatCompletion` for the active session after **`start()`** has loaded and resolved the default-path TOML
 - **THEN** `api_key`, `base_url`, and `model` MUST come from the resolved credentials produced from that load
 - **AND** `ChatCompletionCapabilities` (including `prefill_supported`) MUST come from the resolved configuration
-- **AND** the implementation MUST NOT use `MORAY_OPENAI_API_KEY`, `MORAY_OPENAI_BASE_URL`, or `MORAY_OPENAI_MODEL` as fallbacks on that startup path
+- **AND** the implementation MUST NOT use `NOVA_OPENAI_API_KEY`, `NOVA_OPENAI_BASE_URL`, or `NOVA_OPENAI_MODEL` as fallbacks on that startup path
 
 ## MODIFIED Requirements
 
@@ -81,7 +81,7 @@ The repository SHALL provide the chat HTTP server as a sub-app under the top-lev
 
 - **WHEN** reviewing the repository layout after implementation
 - **THEN** the chat HTTP server's source and configuration MUST live at `desktop/server`
-- **AND** reusable Moray runtime crates MUST NOT be converted into application-specific packages to host the server
+- **AND** reusable Nova runtime crates MUST NOT be converted into application-specific packages to host the server
 
 #### Scenario: Server crate is consumed as a library
 
@@ -90,15 +90,15 @@ The repository SHALL provide the chat HTTP server as a sub-app under the top-lev
 - **AND** it MUST expose a public async **parameterless** `start` entry point that returns `ServerHandle`, loads the default-path TOML internally, and does not take `ServerOptions`
 - **AND** it MUST expose `ServerHandle::shutdown()` async method to its callers
 
-### Requirement: Server composes runtime via moray-builtin completions module
+### Requirement: Server composes runtime via nova-builtin completions module
 
-The server SHALL build its single `ChatSession` by composing the `moray-core` agent with `moray_builtin::completions::OpenAIChatCompletion` and the `JsonlTranscriptStore` and `CalcTool` from `moray-builtin`.
+The server SHALL build its single `ChatSession` by composing the `nova-core` agent with `nova_builtin::completions::OpenAIChatCompletion` and the `JsonlTranscriptStore` and `CalcTool` from `nova-builtin`.
 
 #### Scenario: Session uses builtin store and tool
 
 - **WHEN** the server initializes its single active session
-- **THEN** the session MUST be backed by `moray_builtin::stores::JsonlTranscriptStore`
-- **AND** its `Toolbox` MUST include `moray_builtin::tools::CalcTool`
+- **THEN** the session MUST be backed by `nova_builtin::stores::JsonlTranscriptStore`
+- **AND** its `Toolbox` MUST include `nova_builtin::tools::CalcTool`
 
 #### Scenario: Completion credentials and capabilities come from resolved TOML-backed configuration
 

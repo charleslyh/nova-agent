@@ -1,25 +1,22 @@
 use async_trait::async_trait;
 
 use crate::completion::ChatCompletionRequestMessage;
-use crate::types::{MorayError, ToolManifest};
+use crate::types::{NovaError, ToolManifest};
 
 #[async_trait]
 pub trait ContextEngine: Send + Sync {
-    async fn setup(&self, tools: &[ToolManifest]) -> Result<(), MorayError>;
+    async fn setup(&self, tools: &[ToolManifest]) -> Result<(), NovaError>;
 
     async fn assemble(
         &self,
         tools: &[ToolManifest],
-    ) -> Result<Vec<ChatCompletionRequestMessage>, MorayError>;
+    ) -> Result<Vec<ChatCompletionRequestMessage>, NovaError>;
 
-    async fn ingest(
-        &self,
-        messages: Vec<ChatCompletionRequestMessage>,
-    ) -> Result<(), MorayError>;
+    async fn ingest(&self, messages: Vec<ChatCompletionRequestMessage>) -> Result<(), NovaError>;
 
-    async fn teardown(&self) -> Result<(), MorayError>;
+    async fn teardown(&self) -> Result<(), NovaError>;
 
-    async fn clear(&self) -> Result<(), MorayError>;
+    async fn clear(&self) -> Result<(), NovaError>;
 
     /// Returns a clone of ingested transcript messages when supported.
     ///

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use moray_core::{MorayError, ToolCallResponder, TypedTool};
+use nova_core::{NovaError, ToolCallResponder, TypedTool};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
@@ -33,18 +33,18 @@ impl TypedTool for FileWriteTool {
         args: FileWriteArgs,
         responder: &dyn ToolCallResponder,
         _cancellation: CancellationToken,
-    ) -> Result<(), MorayError> {
+    ) -> Result<(), NovaError> {
         let path = resolve_path(&self.cwd, &args.path);
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                MorayError::Message(format!(
+                NovaError::Message(format!(
                     "file_write: failed to create parent directory: {e}"
                 ))
             })?;
         }
         tokio::fs::write(&path, args.content.as_bytes())
             .await
-            .map_err(|e| MorayError::Message(format!("file_write: failed to write file: {e}")))?;
+            .map_err(|e| NovaError::Message(format!("file_write: failed to write file: {e}")))?;
         responder
             .send_text(format!(
                 "Written {} bytes to {}",

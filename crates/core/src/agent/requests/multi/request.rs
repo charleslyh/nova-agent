@@ -7,7 +7,7 @@ use crate::agent::requests::multi::harness::AgentHarnessFactory;
 use crate::agent::requests::multi::sink::{bridge_agent_events, AgentRole, MultiAgentEventSink};
 use crate::agent::requests::multi::trigger::{inject_sub_agents_trigger, SubAgentSpec};
 use crate::agent::requests::single::AgentRequestBuilder;
-use crate::{ContextEngine, MorayError, Toolbox};
+use crate::{ContextEngine, NovaError, Toolbox};
 
 /// Builds arguments for a multi-agent leader run. [`Self::factory`], [`Self::leader_agent_id`],
 /// and [`Self::context`] are required.
@@ -78,30 +78,27 @@ impl MultiAgentsRequestBuilder {
     pub fn run(
         self,
         events: Arc<dyn MultiAgentEventSink>,
-    ) -> std::result::Result<JoinHandle<std::result::Result<(), MorayError>>, MorayError> {
+    ) -> std::result::Result<JoinHandle<std::result::Result<(), NovaError>>, NovaError> {
         let Some(factory) = self.factory else {
-            return Err(MorayError::Message(
+            return Err(NovaError::Message(
                 "MultiAgentsRequestBuilder: missing required `factory`".into(),
             ));
         };
         let Some(leader_agent_id) = self.leader_agent_id else {
-            return Err(MorayError::Message(
+            return Err(NovaError::Message(
                 "MultiAgentsRequestBuilder: missing required `leader_agent_id`".into(),
             ));
         };
         let Some(context) = self.context else {
-            return Err(MorayError::Message(
+            return Err(NovaError::Message(
                 "MultiAgentsRequestBuilder: missing required `context`".into(),
             ));
         };
 
         let cancellation = self.cancellation.unwrap_or_default();
 
-        let leader_sink = bridge_agent_events(
-            events.clone(),
-            leader_agent_id.clone(),
-            AgentRole::Leader,
-        );
+        let leader_sink =
+            bridge_agent_events(events.clone(), leader_agent_id.clone(), AgentRole::Leader);
 
         let toolbox = create_leader_toolbox(
             factory.clone(),
@@ -136,7 +133,7 @@ fn create_leader_toolbox(
     leader_context: Arc<dyn ContextEngine>,
     events: Arc<dyn MultiAgentEventSink>,
     cancellation: CancellationToken,
-) -> std::result::Result<Arc<Toolbox>, MorayError> {
+) -> std::result::Result<Arc<Toolbox>, NovaError> {
     let mut toolbox = factory.create_toolbox(leader_agent_id)?;
 
     inject_sub_agents_trigger(

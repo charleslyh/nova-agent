@@ -14,7 +14,7 @@ Current `chat.rs` rendering is tied to the stream returned by `session.post`, wh
 **Non-Goals:**
 - Introducing async UI frameworks or a full event bus beyond current store/session boundaries.
 - Redesigning transcript persistence format.
-- Changing model/tool protocol semantics in `moray_core`.
+- Changing model/tool protocol semantics in `nova_core`.
 
 ## Decisions
 

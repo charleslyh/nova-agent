@@ -36,7 +36,7 @@ pub(crate) async fn run(
     max_rounds: usize,
     cancellation: CancellationToken,
     sink: Arc<dyn AgentEventSink>,
-) -> std::result::Result<(), crate::types::MorayError> {
+) -> std::result::Result<(), crate::types::NovaError> {
     let tools = toolbox.list_tools().await;
     info!(stream, tool_count = tools.len(), "react run started");
     if let Err(e) = context.setup(&tools).await {
@@ -57,7 +57,10 @@ pub(crate) async fn run(
 
         // --- Round-limit graceful wrap-up ---
         if round > max_rounds {
-            warn!(max_rounds, round, "react run exceeded max rounds, entering wrap-up");
+            warn!(
+                max_rounds,
+                round, "react run exceeded max rounds, entering wrap-up"
+            );
 
             // Inject the round-limit prompt so the LLM knows tools are disabled.
             if let Err(e) = context
@@ -75,7 +78,7 @@ pub(crate) async fn run(
             // Execute one final completion with NO tools (physically prevents tool calls).
             match react_once(
                 &context,
-                &[],  // empty tools — LLM cannot produce tool calls
+                &[], // empty tools — LLM cannot produce tool calls
                 &completion,
                 stream,
                 &toolbox,
@@ -125,7 +128,8 @@ pub(crate) async fn run(
     }
 
     info!(?exit_kind, "react run finished");
-    sink.emit(AgentResponseEvent::Finished { kind: exit_kind }).await;
+    sink.emit(AgentResponseEvent::Finished { kind: exit_kind })
+        .await;
     Ok(())
 }
 
@@ -258,9 +262,7 @@ async fn react_once(
                 let group = if let Some(id) = tool_call_group {
                     id
                 } else {
-                    let sink = Arc::new(AgentToolCallEventSink {
-                        sink: sink.clone(),
-                    });
+                    let sink = Arc::new(AgentToolCallEventSink { sink: sink.clone() });
                     let id = toolbox.begin_group(sink, cancellation.clone()).await;
                     tool_call_group = Some(id);
                     id
@@ -328,10 +330,13 @@ async fn react_once(
 
         (nb_tool_calls, ingest_messages)
     } else {
-        (0, vec![ChatCompletionRequestMessage::Assistant {
-            content: acc_text,
-            tool_calls: None,
-        }])
+        (
+            0,
+            vec![ChatCompletionRequestMessage::Assistant {
+                content: acc_text,
+                tool_calls: None,
+            }],
+        )
     };
 
     if let Err(e) = context.ingest(ingest_messages).await {
@@ -365,7 +370,7 @@ async fn react_once(
 mod tests {
     use super::*;
     use crate::toolbox::{ToolCallEventKind, ToolboxBuilder};
-    use crate::types::MorayError;
+    use crate::types::NovaError;
     use futures::{stream, Stream};
     use std::pin::Pin;
     use std::sync::Mutex;
@@ -374,25 +379,25 @@ mod tests {
 
     #[async_trait]
     impl ContextEngine for NoopContext {
-        async fn setup(&self, _tools: &[ToolManifest]) -> Result<(), MorayError> {
+        async fn setup(&self, _tools: &[ToolManifest]) -> Result<(), NovaError> {
             Ok(())
         }
         async fn assemble(
             &self,
             _tools: &[ToolManifest],
-        ) -> Result<Vec<ChatCompletionRequestMessage>, MorayError> {
+        ) -> Result<Vec<ChatCompletionRequestMessage>, NovaError> {
             Ok(Vec::new())
         }
         async fn ingest(
             &self,
             _messages: Vec<ChatCompletionRequestMessage>,
-        ) -> Result<(), MorayError> {
+        ) -> Result<(), NovaError> {
             Ok(())
         }
-        async fn teardown(&self) -> Result<(), MorayError> {
+        async fn teardown(&self) -> Result<(), NovaError> {
             Ok(())
         }
-        async fn clear(&self) -> Result<(), MorayError> {
+        async fn clear(&self) -> Result<(), NovaError> {
             Ok(())
         }
     }
@@ -408,8 +413,8 @@ mod tests {
             _tools: &[ToolManifest],
             _stream: bool,
         ) -> Result<
-            Pin<Box<dyn Stream<Item = Result<ChatCompletionResponseChunk, MorayError>> + Send>>,
-            MorayError,
+            Pin<Box<dyn Stream<Item = Result<ChatCompletionResponseChunk, NovaError>> + Send>>,
+            NovaError,
         > {
             let chunks = vec![
                 Ok(ChatCompletionResponseChunk::ToolCall(ToolCallRequest {
@@ -474,7 +479,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(kinds.len(), 3, "requested + payload + finished, got {kinds:?}");
+        assert_eq!(
+            kinds.len(),
+            3,
+            "requested + payload + finished, got {kinds:?}"
+        );
         assert!(matches!(
             &kinds[0],
             ToolCallEventKind::Requested { name, .. } if name == "image_create"

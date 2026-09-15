@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use crate::{
-    ChatCompletion, ChatCompletionRequestMessage, ContextEngine, MorayError, Toolbox,
-};
+use crate::{ChatCompletion, ChatCompletionRequestMessage, ContextEngine, NovaError, Toolbox};
 
 use super::formatter::AgentResultFormatter;
 
@@ -11,15 +9,15 @@ pub trait AgentHarnessFactory: Send + Sync {
     fn create_completion(
         &self,
         agent_id: &str,
-    ) -> std::result::Result<Arc<dyn ChatCompletion>, MorayError>;
+    ) -> std::result::Result<Arc<dyn ChatCompletion>, NovaError>;
 
-    fn create_toolbox(&self, agent_id: &str) -> std::result::Result<Toolbox, MorayError>;
+    fn create_toolbox(&self, agent_id: &str) -> std::result::Result<Toolbox, NovaError>;
 
     fn create_context(
         &self,
         agent_id: &str,
         messages: Vec<ChatCompletionRequestMessage>,
-    ) -> std::result::Result<Arc<dyn ContextEngine>, MorayError>;
+    ) -> std::result::Result<Arc<dyn ContextEngine>, NovaError>;
 
     /// Optionally provide a result formatter for a sub-agent.
     ///
@@ -28,10 +26,7 @@ pub trait AgentHarnessFactory: Send + Sync {
     /// "last text block" behavior.
     ///
     /// Default implementation returns `None` (no custom formatting).
-    fn create_result_formatter(
-        &self,
-        _agent_id: &str,
-    ) -> Option<Arc<dyn AgentResultFormatter>> {
+    fn create_result_formatter(&self, _agent_id: &str) -> Option<Arc<dyn AgentResultFormatter>> {
         None
     }
 }

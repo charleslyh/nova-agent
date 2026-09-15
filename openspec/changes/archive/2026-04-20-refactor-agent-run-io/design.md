@@ -21,7 +21,7 @@ Legacy **`AssistantTextDone`** marks **UX-relevant** “assistant text streaming
 
 **Decision — Option A (chosen): extend `ChatCompletionResponseChunk` with `TextDone` only:**
 
-- Add **`TextDone`**: emitted after the last **`TextBlock`** for the round and **before** the first **`ToolCall`** when both text and tools exist. Rules for text-only rounds (e.g. **`TextDone`** immediately before **`Done`**, or omitted—implementation-defined) SHALL be documented in `moray-core`.
+- Add **`TextDone`**: emitted after the last **`TextBlock`** for the round and **before** the first **`ToolCall`** when both text and tools exist. Rules for text-only rounds (e.g. **`TextDone`** immediately before **`Done`**, or omitted—implementation-defined) SHALL be documented in `nova-core`.
 
 Adapters that do not receive an explicit wire **`TextDone`** **MUST** synthesize it at the correct position so the agent can forward it as **`ChatResponseChunk`** without a second parallel taxonomy.
 

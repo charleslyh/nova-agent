@@ -359,10 +359,7 @@ mod tests {
         reducer.on_event(&AgentResponseEvent::Finished {
             kind: AgentFinishKind::Canceled,
         });
-        assert_eq!(
-            reducer.into_result(),
-            Err("sub agent run canceled".into())
-        );
+        assert_eq!(reducer.into_result(), Err("sub agent run canceled".into()));
     }
 
     // --- Formatter tests ---
@@ -570,9 +567,6 @@ mod tests {
 
         let result = reducer.into_result();
         // Even without Finished, the pending call is flushed to records
-        assert_eq!(
-            result,
-            Ok("dangling_tool(null)->partial".into())
-        );
+        assert_eq!(result, Ok("dangling_tool(null)->partial".into()));
     }
 }

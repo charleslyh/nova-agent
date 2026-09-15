@@ -63,8 +63,8 @@ impl PreambleSection for SkillsSection {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     use super::*;
 

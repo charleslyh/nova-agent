@@ -6,7 +6,7 @@ The repository SHALL provide the Vue web app as a sub-app under the top-level `d
 #### Scenario: Web app is colocated with other desktop sub-apps
 - **WHEN** reviewing the repository layout after implementation
 - **THEN** the web app's source, package files, and configuration MUST live at `desktop/web`
-- **AND** the web app MUST NOT be hosted inside reusable Moray runtime crates
+- **AND** the web app MUST NOT be hosted inside reusable Nova runtime crates
 
 ### Requirement: Web stack is Vue 3 + Vite + pnpm in plain JavaScript
 The web app SHALL be implemented as a pnpm package using Vue 3 and Vite in plain JavaScript and SHALL NOT introduce TypeScript or a UI framework in this change.
@@ -93,7 +93,7 @@ The web app SHALL render conversation progress from `ChatClient`-delivered sessi
 
 #### Scenario: Web app does not embed conversation runtime logic
 - **WHEN** reviewing the web app's source code
-- **THEN** Vue code MUST NOT instantiate or reimplement Moray agent / session execution logic locally
+- **THEN** Vue code MUST NOT instantiate or reimplement Nova agent / session execution logic locally
 - **AND** all conversation behavior MUST be delegated through the `ChatClient` abstraction
 
 ### Requirement: Tool authorization prompt handling in the web app

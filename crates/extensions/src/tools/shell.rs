@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 
 use async_trait::async_trait;
-use moray_core::{MorayError, ToolCallResponder, TypedTool};
+use nova_core::{NovaError, ToolCallResponder, TypedTool};
 
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
@@ -43,10 +43,10 @@ impl TypedTool for ShellTool {
         args: ShellArgs,
         responder: &dyn ToolCallResponder,
         _cancellation: CancellationToken,
-    ) -> Result<(), MorayError> {
+    ) -> Result<(), NovaError> {
         let command = args.command.trim();
         if command.is_empty() {
-            return Err(MorayError::Message("shell: command is empty".into()));
+            return Err(NovaError::Message("shell: command is empty".into()));
         }
 
         let run = run_shell_command(self, command, responder);
@@ -54,7 +54,7 @@ impl TypedTool for ShellTool {
         timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS), run)
             .await
             .map_err(|_| {
-                MorayError::Message(format!(
+                NovaError::Message(format!(
                     "shell: command timed out after {DEFAULT_TIMEOUT_SECS} seconds"
                 ))
             })?
@@ -80,11 +80,12 @@ impl<R: AsyncRead + Unpin> PipeReader<R> {
         }
     }
 
-    async fn read_chunk(&mut self, responder: &dyn ToolCallResponder) -> Result<(), MorayError> {
+    async fn read_chunk(&mut self, responder: &dyn ToolCallResponder) -> Result<(), NovaError> {
         // read stdout or stderr chunk by chunk
-        let n = self.reader.read(&mut self.buf).await.map_err(|e| {
-            MorayError::Message(format!("shell: failed to read {}: {e}", self.name))
-        })?;
+        let n =
+            self.reader.read(&mut self.buf).await.map_err(|e| {
+                NovaError::Message(format!("shell: failed to read {}: {e}", self.name))
+            })?;
 
         // n == 0 means EOF, set eof to true so the while loop in run_shell_command can exit
         if n == 0 {
@@ -113,7 +114,7 @@ async fn run_shell_command(
     tool: &ShellTool,
     command: &str,
     responder: &dyn ToolCallResponder,
-) -> Result<(), MorayError> {
+) -> Result<(), NovaError> {
     let mut cmd = if cfg!(target_os = "windows") {
         let mut c = Command::new("cmd");
         c.arg("/C").arg(command);
@@ -135,16 +136,16 @@ async fn run_shell_command(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| MorayError::Message(format!("shell: failed to execute command: {e}")))?;
+        .map_err(|e| NovaError::Message(format!("shell: failed to execute command: {e}")))?;
 
     let stdout = child
         .stdout
         .take()
-        .ok_or_else(|| MorayError::Message("shell: stdout not piped".into()))?;
+        .ok_or_else(|| NovaError::Message("shell: stdout not piped".into()))?;
     let stderr = child
         .stderr
         .take()
-        .ok_or_else(|| MorayError::Message("shell: stderr not piped".into()))?;
+        .ok_or_else(|| NovaError::Message("shell: stderr not piped".into()))?;
 
     let mut stdout = PipeReader::new(stdout, None, "stdout");
     let mut stderr = PipeReader::new(stderr, Some("[stderr] "), "stderr");
@@ -159,13 +160,13 @@ async fn run_shell_command(
     let status = child
         .wait()
         .await
-        .map_err(|e| MorayError::Message(format!("shell: failed to wait for command: {e}")))?;
+        .map_err(|e| NovaError::Message(format!("shell: failed to wait for command: {e}")))?;
 
     let footer = serde_json::to_string(&serde_json::json!({
         "success": status.success(),
         "exit_code": status.code(),
     }))
-    .map_err(|e| MorayError::Message(format!("shell: serialization failed: {e}")))?;
+    .map_err(|e| NovaError::Message(format!("shell: serialization failed: {e}")))?;
     responder.send_text(format!("\n{footer}")).await?;
     Ok(())
 }

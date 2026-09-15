@@ -4,7 +4,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum MorayError {
+pub enum NovaError {
     #[error("{0}")]
     Message(String),
 

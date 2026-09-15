@@ -12,7 +12,7 @@ pub enum SkillsPromptMode {
     Full,
 }
 
-/// Authorization block when skills are registered (Moray: tools come from API, not prompt).
+/// Authorization block when skills are registered (Nova: tools come from API, not prompt).
 pub fn skills_authorization_prompt(skill_names: &[String]) -> String {
     if skill_names.is_empty() {
         return String::new();

@@ -109,7 +109,7 @@ pub async fn prepare() -> Result<ServerComponents, StartError> { ... }
 调用方典型用法：
 
 ```rust
-let components = moray_desktop_server::prepare().await?;
+let components = nova_desktop_server::prepare().await?;
 let local_addr = components.local_addr;
 let token = tokio_util::sync::CancellationToken::new();
 let shutdown = token.clone();
@@ -210,7 +210,7 @@ impl ServerHandle {
 2. 把测试迁到 `tests/http.rs` 并使用即将上线的 `prepare()` API（如还未公开则先用 `pub(crate)` + `#[path]` 重导出方式过渡——一次性提交时不必要）。
 3. 删除 `start()` / `ServerHandle`，公开 `prepare()`。
 4. 在 `desktop/client/src-tauri/` 引入 `server_supervisor`（或内联），消费 `prepare()`，定义 client 内部的 `ServerHandle`；为 `tokio-util` 增加依赖。
-5. `cargo build -p moray-desktop-server -p moray-desktop-client` 编译验证；`cargo test -p moray-desktop-server` 跑通端到端测试。
+5. `cargo build -p nova-desktop-server -p nova-desktop-client` 编译验证；`cargo test -p nova-desktop-server` 跑通端到端测试。
 6. 归档时按 delta 更新 `openspec/specs/server/spec.md`。
 
 回滚：本变更是同一 PR 内的纯重构 + API 迁移，回滚即 revert PR。

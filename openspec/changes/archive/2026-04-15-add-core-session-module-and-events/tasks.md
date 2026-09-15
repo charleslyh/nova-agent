@@ -1,6 +1,6 @@
 ## 1. Specification
-- [x] 1.1 Add `moray-core` deltas for `Session` and `SessionEvent` requirements.
-- [x] 1.2 Modify `moray-demos` `chat` requirement to delegate session orchestration to `moray_core::Session`.
+- [x] 1.1 Add `nova-core` deltas for `Session` and `SessionEvent` requirements.
+- [x] 1.2 Modify `nova-demos` `chat` requirement to delegate session orchestration to `nova_core::Session`.
 
 ## 2. Core implementation
 - [x] 2.1 Add `core/src/session.rs` with `Session`, `SessionStore`, and `SessionEvent` definitions.
@@ -15,4 +15,4 @@
 ## 4. Validation
 - [x] 4.1 Run `openspec validate add-core-session-module-and-events --strict`.
 - [x] 4.2 Run `cargo build`.
-- [x] 4.3 Run targeted tests for `moray-core` and `demo` (`cargo test -p moray-core` and `cargo test -p demo`).
+- [x] 4.3 Run targeted tests for `nova-core` and `demo` (`cargo test -p nova-core` and `cargo test -p demo`).

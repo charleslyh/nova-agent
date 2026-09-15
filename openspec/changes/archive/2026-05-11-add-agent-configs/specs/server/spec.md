@@ -1,13 +1,13 @@
 ## MODIFIED Requirements
 
-### Requirement: Server composes runtime via moray-builtin completions module
-The server SHALL build the active `ChatSession` by composing the `moray-core` agent with `moray_builtin::completions::OpenAIChatCompletion` and the `JsonlTranscriptStore` and built-in tools from `moray-builtin`.
+### Requirement: Server composes runtime via nova-builtin completions module
+The server SHALL build the active `ChatSession` by composing the `nova-core` agent with `nova_builtin::completions::OpenAIChatCompletion` and the `JsonlTranscriptStore` and built-in tools from `nova-builtin`.
 
 For each session turn, the completion adapter and completion capabilities MUST be resolved from the agent currently bound to that session. The server SHALL expose a unified configuration access type that can resolve runtime configuration by `session_id` through the chain `session_id -> agent_id -> AgentConfig -> completion_id -> CompletionConfig`, regardless of whether the underlying data is stored in one TOML file, multiple TOML files, SQLite, or a future mixed backend. The agent MUST reference a configured completion record, and that completion record MUST provide `base_url`, `model`, and `ChatCompletionCapabilities` used to construct `OpenAIChatCompletion`. The `api_key` MUST be supplied to `OpenAIChatCompletion` as a resolved string at each turn construction time: literal keys are taken from stored configuration; omitted `api_key` and `env:` indirection MUST be resolved by reading the environment when constructing the adapter for that turn, not only once at configuration load time.
 
 #### Scenario: Session uses builtin store and tools
 - **WHEN** the server initializes its active session
-- **THEN** the session MUST be backed by `moray_builtin::stores::JsonlTranscriptStore`
+- **THEN** the session MUST be backed by `nova_builtin::stores::JsonlTranscriptStore`
 - **AND** its `Toolbox` MUST include the default built-in desktop tools configured by `desktop/server`
 
 #### Scenario: Completion credentials and capabilities come from the bound agent
@@ -27,7 +27,7 @@ For each session turn, the completion adapter and completion capabilities MUST b
 - **AND** the runtime completion adapter MUST receive the resolved key string for that turn, not the `env:` reference
 
 ### Requirement: Completion settings are loaded from a TOML file
-The `desktop/server` library SHALL define a canonical configuration file path under the user's Moray data directory (`$HOME/.moray/server.toml` when `HOME` is set, using the same directory convention as other desktop artifacts such as the JSONL transcript), SHALL expose a public API to load from that default path, and SHALL expose a public API to load from a caller-provided filesystem path for tests and advanced use.
+The `desktop/server` library SHALL define a canonical configuration file path under the user's Nova data directory (`$HOME/.nova/server.toml` when `HOME` is set, using the same directory convention as other desktop artifacts such as the JSONL transcript), SHALL expose a public API to load from that default path, and SHALL expose a public API to load from a caller-provided filesystem path for tests and advanced use.
 
 The on-disk TOML SHALL support the current multi-agent schema:
 
@@ -38,10 +38,10 @@ The loader MUST treat the previous single completion TOML shape with top-level `
 
 The resolved in-memory value suitable for starting the HTTP server MUST contain at least one valid completion and at least one valid agent. Session defaults and per-session agent ids MUST be loaded from the independent session configuration file, not from `server.toml`. Validation of environment-backed `api_key` values for completions that omit `api_key` or use the `env:` form MUST NOT require the environment variable to be set at configuration load time; missing or empty values MUST surface as deterministic errors when the server constructs the completion adapter for a turn that uses that completion.
 
-#### Scenario: Default config path lives next to other ~/.moray artifacts
+#### Scenario: Default config path lives next to other ~/.nova artifacts
 - **WHEN** the library resolves the default configuration file path on a system where `HOME` is set
-- **THEN** the path MUST be `$HOME/.moray/server.toml`
-- **AND** that directory MUST be the same logical location used for other Moray desktop user data
+- **THEN** the path MUST be `$HOME/.nova/server.toml`
+- **AND** that directory MUST be the same logical location used for other Nova desktop user data
 
 #### Scenario: Multi-agent TOML resolves completion records
 - **WHEN** the TOML file contains `[[completions]]` entries
@@ -66,10 +66,10 @@ The resolved in-memory value suitable for starting the HTTP server MUST contain 
 - **AND** when constructing `OpenAIChatCompletion` for a turn using this completion, if that name is non-empty, the runtime `api_key` MUST be the value of `std::env::var` for that name, trimmed
 - **AND** if that name is empty or the environment variable is unset or empty after trim at that construction time, the server MUST fail that turn with a deterministic error
 
-#### Scenario: Omitted api key defaults to MORAY_OPENAI_API_KEY
+#### Scenario: Omitted api key defaults to NOVA_OPENAI_API_KEY
 - **WHEN** a completion omits the `api_key` field
-- **THEN** the implementation MUST behave as if that completion had set `api_key = "env:MORAY_OPENAI_API_KEY"` when resolving credentials for each turn construction
-- **AND** when constructing `OpenAIChatCompletion` for a turn, if `MORAY_OPENAI_API_KEY` is unset or empty after trim, the server MUST fail that turn with a deterministic error
+- **THEN** the implementation MUST behave as if that completion had set `api_key = "env:NOVA_OPENAI_API_KEY"` when resolving credentials for each turn construction
+- **AND** when constructing `OpenAIChatCompletion` for a turn, if `NOVA_OPENAI_API_KEY` is unset or empty after trim, the server MUST fail that turn with a deterministic error
 
 #### Scenario: Agent completion references are validated
 - **WHEN** the server loads the multi-agent TOML
@@ -79,7 +79,7 @@ The resolved in-memory value suitable for starting the HTTP server MUST contain 
 ## ADDED Requirements
 
 ### Requirement: Session-agent settings are loaded from an independent TOML file
-The `desktop/server` library SHALL currently store session-agent configuration in an independent TOML file under the user's Moray data directory, separate from `server.toml` and separate from the JSONL transcript. Under `[sessions]`, the file SHALL contain exactly one **`default`** key whose value is the default agent tinyid, plus optional flat rows `session_id = agent_tinyid` for sessions that differ from that default. Keys `default_agent`, `default_agent_id`, and `bindings` MUST NOT appear under `[sessions]` in the supported on-disk shape.
+The `desktop/server` library SHALL currently store session-agent configuration in an independent TOML file under the user's Nova data directory, separate from `server.toml` and separate from the JSONL transcript. Under `[sessions]`, the file SHALL contain exactly one **`default`** key whose value is the default agent tinyid, plus optional flat rows `session_id = agent_tinyid` for sessions that differ from that default. Keys `default_agent`, `default_agent_id`, and `bindings` MUST NOT appear under `[sessions]` in the supported on-disk shape.
 
 The file split SHALL be hidden behind the server's unified configuration access type. HTTP handlers, runtime harness construction, and other server business logic MUST use that unified type rather than reading or composing `server.toml` and the session config file directly.
 
@@ -87,8 +87,8 @@ Writing either `server.toml` or the independent session configuration file SHALL
 
 #### Scenario: Session config path lives beside server config
 - **WHEN** the library resolves the session-agent configuration path on a system where `HOME` is set
-- **THEN** the path MUST be under `$HOME/.moray/`
-- **AND** it MUST NOT be the same path as `$HOME/.moray/server.toml`
+- **THEN** the path MUST be under `$HOME/.nova/`
+- **AND** it MUST NOT be the same path as `$HOME/.nova/server.toml`
 - **AND** it MUST NOT be the JSONL transcript path
 
 #### Scenario: Session config validates default agent
@@ -148,7 +148,7 @@ These endpoints SHALL be served by the HTTP `ChatClient` transport; the Tauri co
 - **AND** persisted configuration MUST NOT be modified
 
 ### Requirement: Session turns use the persisted session-agent binding
-The HTTP server SHALL use the persisted agent binding for the target session when accepting a new user message. A successful agent switch SHALL affect only future turns, including when the switch is accepted during an already-running turn, and SHALL NOT rewrite existing transcript events. The implementation SHALL keep session-agent lookup in the unified server configuration access type so runtime construction can resolve the effective agent from `session_id` without duplicating binding logic in UI code, transcript data, route handlers, or `moray-core`.
+The HTTP server SHALL use the persisted agent binding for the target session when accepting a new user message. A successful agent switch SHALL affect only future turns, including when the switch is accepted during an already-running turn, and SHALL NOT rewrite existing transcript events. The implementation SHALL keep session-agent lookup in the unified server configuration access type so runtime construction can resolve the effective agent from `session_id` without duplicating binding logic in UI code, transcript data, route handlers, or `nova-core`.
 
 #### Scenario: Post message uses selected agent
 - **WHEN** a session (for example `default`) is bound to agent `abcdefgh` and the client posts a new user message for that session

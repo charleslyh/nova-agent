@@ -6,7 +6,7 @@ The repository SHALL provide the chat HTTP server as a sub-app under the top-lev
 #### Scenario: Server is colocated with other desktop sub-apps
 - **WHEN** reviewing the repository layout after implementation
 - **THEN** the chat HTTP server's source and configuration MUST live at `desktop/server`
-- **AND** reusable Moray runtime crates MUST NOT be converted into application-specific packages to host the server
+- **AND** reusable Nova runtime crates MUST NOT be converted into application-specific packages to host the server
 
 #### Scenario: Server crate is consumed as a library
 - **WHEN** inspecting `desktop/server`'s `Cargo.toml`
@@ -38,17 +38,17 @@ The server SHALL bind only to a local loopback address with a runtime-selected p
 - **WHEN** the server is running
 - **THEN** the server MUST NOT bind to a publicly reachable address by default
 
-### Requirement: Server composes runtime via moray-builtin completions module
-The server SHALL build its single `ChatSession` by composing the `moray-core` agent with `moray_builtin::completions::OpenAIChatCompletion` and the `JsonlTranscriptStore` and `CalcTool` from `moray-builtin`.
+### Requirement: Server composes runtime via nova-builtin completions module
+The server SHALL build its single `ChatSession` by composing the `nova-core` agent with `nova_builtin::completions::OpenAIChatCompletion` and the `JsonlTranscriptStore` and `CalcTool` from `nova-builtin`.
 
 #### Scenario: Session uses builtin store and tool
 - **WHEN** the server initializes its single active session
-- **THEN** the session MUST be backed by `moray_builtin::stores::JsonlTranscriptStore`
-- **AND** its `Toolbox` MUST include `moray_builtin::tools::CalcTool`
+- **THEN** the session MUST be backed by `nova_builtin::stores::JsonlTranscriptStore`
+- **AND** its `Toolbox` MUST include `nova_builtin::tools::CalcTool`
 
 #### Scenario: Completion credentials come from env or options
 - **WHEN** the server starts
-- **THEN** it MUST resolve OpenAI credentials from `ServerOptions` if provided, otherwise from `MORAY_OPENAI_API_KEY` / `MORAY_OPENAI_BASE_URL` / `MORAY_OPENAI_MODEL` environment variables
+- **THEN** it MUST resolve OpenAI credentials from `ServerOptions` if provided, otherwise from `NOVA_OPENAI_API_KEY` / `NOVA_OPENAI_BASE_URL` / `NOVA_OPENAI_MODEL` environment variables
 
 ### Requirement: Single active session HTTP boundary
 The HTTP server SHALL manage exactly one active conversation session and route every chat-domain endpoint to that single session.
@@ -144,7 +144,7 @@ The HTTP server SHALL return a uniform JSON error body for non-2xx responses.
 
 #### Scenario: Error status codes map deterministically
 - **WHEN** mapping runtime errors to HTTP responses
-- **THEN** `MorayError::Busy` MUST map to HTTP 409 with `code: "BUSY"`
+- **THEN** `NovaError::Busy` MUST map to HTTP 409 with `code: "BUSY"`
 - **AND** unknown tool call ids MUST map to HTTP 404 with `code: "NOT_FOUND"`
 - **AND** malformed payloads MUST map to HTTP 400 with `code: "BAD_REQUEST"`
 - **AND** other runtime errors MUST map to HTTP 500 with `code: "INTERNAL"`

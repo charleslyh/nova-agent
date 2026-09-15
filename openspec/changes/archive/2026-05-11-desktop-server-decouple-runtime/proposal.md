@@ -32,4 +32,4 @@
 - 公开 API：移除 `pub use` 的 `ServerHandle` 与 `start`；新增 `pub use bootstrap::{prepare, ServerComponents, StartError}`。
 - 测试：`desktop/server/src/lib.rs` 内的集成测试迁出到 `desktop/server/tests/http.rs`，使用 `prepare()` 而非 `start()` 启动；删除 `unknown_session_returns_404` 测试；client 端如果有冒烟测试需同步调整（当前 `main.rs` 在 `#[cfg(test)] fn main() {}`，无 client 侧 server 启动测试需要变更）。
 - 依赖：`desktop/client/src-tauri/Cargo.toml` 新增 `tokio-util`（`CancellationToken`）依赖；`desktop/server/Cargo.toml` 可继续保留 `tokio-util` 以服务于测试辅助函数。
-- 文档：`openspec/specs/server/spec.md` 在归档时按 delta 更新；`server.toml.example` 与 `~/.moray/` 行为不受影响。
+- 文档：`openspec/specs/server/spec.md` 在归档时按 delta 更新；`server.toml.example` 与 `~/.nova/` 行为不受影响。

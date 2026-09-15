@@ -25,11 +25,11 @@ Persisted event history and model-facing context assembly have different respons
 
 - Introducing a new persistence schema.
 - Changing toolbox authorization behavior.
-- Shipping a bundled default `ContextEngine` implementation in `moray-core`.
+- Shipping a bundled default `ContextEngine` implementation in `nova-core`.
 
 ## Impact
 
-- **Affected specs**: `moray-core`, `moray-demos`
+- **Affected specs**: `nova-core`, `nova-demos`
 - **Affected code (planned)**:
   - `core/src/agent.rs`
   - `core/src/session.rs`

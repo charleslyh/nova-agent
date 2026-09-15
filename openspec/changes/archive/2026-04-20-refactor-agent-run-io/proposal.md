@@ -12,5 +12,5 @@
 
 ## Impact
 
-- Affected specs: `moray-core`, `moray-demos`
+- Affected specs: `nova-core`, `nova-demos`
 - Affected code (indicative): `core/src/agent.rs`, `core/src/replay.rs`, `core/src/session.rs`, `core/src/lib.rs`, `demo/` (examples, `chat_view`, transcript, tests)

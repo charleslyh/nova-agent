@@ -17,7 +17,7 @@
 - `session-delta-subscription`: Defines store-backed multi-subscriber delta streaming with sequence-based subscription offsets for session state tracking.
 
 ### Modified Capabilities
-- `moray-demos`: Update demo chat behavior to render from store subscriber deltas instead of directly binding rendering to `session.post` stream output.
+- `nova-demos`: Update demo chat behavior to render from store subscriber deltas instead of directly binding rendering to `session.post` stream output.
 
 ## Impact
 

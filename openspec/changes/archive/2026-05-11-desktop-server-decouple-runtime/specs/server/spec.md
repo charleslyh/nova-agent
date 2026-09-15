@@ -31,7 +31,7 @@ The `desktop/server` crate SHALL NOT validate the `session_id` path segment agai
 The `desktop/server` crate SHALL NOT spawn Tokio tasks for serving HTTP requests, and SHALL NOT define or return a handle that owns a `JoinHandle` or `CancellationToken` for the HTTP serve loop. Lifecycle management of the serve task SHALL belong to the calling binary.
 
 #### Scenario: Library does not spawn the axum serve task
-- **WHEN** auditing public APIs of `moray-desktop-server`
+- **WHEN** auditing public APIs of `nova-desktop-server`
 - **THEN** no public function MUST call `tokio::spawn`, `tokio::task::spawn`, `tokio::task::spawn_blocking`, or equivalent to drive `axum::serve` to completion on behalf of the caller
 - **AND** no public type MUST expose a `shutdown` method that internally awaits a `JoinHandle`
 
@@ -48,7 +48,7 @@ The repository SHALL provide the chat HTTP server as a sub-app under the top-lev
 #### Scenario: Server is colocated with other desktop sub-apps
 - **WHEN** reviewing the repository layout after implementation
 - **THEN** the chat HTTP server's source and configuration MUST live at `desktop/server`
-- **AND** reusable Moray runtime crates MUST NOT be converted into application-specific packages to host the server
+- **AND** reusable Nova runtime crates MUST NOT be converted into application-specific packages to host the server
 
 #### Scenario: Server crate is consumed as a library
 - **WHEN** inspecting `desktop/server`'s `Cargo.toml`
@@ -61,7 +61,7 @@ The repository SHALL provide the chat HTTP server as a sub-app under the top-lev
 The chat HTTP server SHALL be runnable in the caller's process by composing the library-provided `ServerComponents` with the caller's own task spawning and graceful-shutdown wiring. The library SHALL NOT prescribe the runtime task topology or the shutdown signal source.
 
 #### Scenario: Caller drives the serve loop on its own runtime
-- **WHEN** the calling binary uses `moray_desktop_server::prepare()` to obtain `ServerComponents`
+- **WHEN** the calling binary uses `nova_desktop_server::prepare()` to obtain `ServerComponents`
 - **THEN** the binary MUST be the entity that calls `axum::serve(components.listener, components.app)` and awaits the resulting future on its chosen Tokio task
 - **AND** the bound `local_addr` MUST be exposed to the binary via `ServerComponents::local_addr` synchronously before any `await` on the serve future
 
@@ -72,8 +72,8 @@ The chat HTTP server SHALL be runnable in the caller's process by composing the 
 
 #### Scenario: Library is reusable for an out-of-process binary
 - **WHEN** a future executable crate wishes to run the server as a standalone process
-- **THEN** that executable MUST be able to call the same `prepare()` API and drive `axum::serve` itself without any other public surface in `moray-desktop-server`
-- **AND** no public API of `moray-desktop-server` MUST encode an assumption that the server runs inside a Tauri application
+- **THEN** that executable MUST be able to call the same `prepare()` API and drive `axum::serve` itself without any other public surface in `nova-desktop-server`
+- **AND** no public API of `nova-desktop-server` MUST encode an assumption that the server runs inside a Tauri application
 
 ### Requirement: Primary HTTP start loads default TOML internally
 The `desktop/server` library SHALL expose a single public **parameterless** async **`prepare`** entry point that loads configuration from the canonical default configuration file path, resolves it to **`ResolvedServerConfig`**, binds the loopback listener, and assembles the `axum::Router` in one step, without requiring the caller to invoke **`load_config`** before **`prepare`**.

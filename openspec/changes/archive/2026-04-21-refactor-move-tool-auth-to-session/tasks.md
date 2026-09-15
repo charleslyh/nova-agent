@@ -1,7 +1,7 @@
 ## 1. Authorization policy abstraction
 
 - [x] 1.1 Define `ToolCallAuthPolicy` trait with two methods: `async fn decide(...) -> AuthDecision` and `async fn reply(&self, call_id, data: serde_json::Value) -> bool`. Define `AuthDecision { Allow, Deny, AskUser { data: Option<serde_json::Value> } }` (no `Eq` derive — `serde_json::Value` is only `PartialEq`). The toolbox still owns the pending `oneshot` map; the policy only sees decoded payloads and MAY cache/persist the outcome.
-- [x] 1.2 `moray-core` ships no concrete policy; exports only the trait + enum from `core/src/auth_policy.rs`. `serde_json` becomes a non-optional dependency so the `data` field compiles regardless of feature flags.
+- [x] 1.2 `nova-core` ships no concrete policy; exports only the trait + enum from `core/src/auth_policy.rs`. `serde_json` becomes a non-optional dependency so the `data` field compiles regardless of feature flags.
 
 ## 2. Toolbox lifecycle stream + policy + pending-auth ownership
 
@@ -14,8 +14,8 @@
     - `Allow`: emit `Started`, dispatch tool, emit `Finished { content }`,
     - `Deny`: emit `Finished { content = TOOL_CALL_DENIED_BY_USER }`,
     - `AskUser { data }`: allocate a fresh `oneshot::channel()`, insert the sender into the pending map keyed by `call_id`, emit `RequestingPermission { call_id, data }` (forwarding `data` verbatim), await the receiver, then proceed allowed/denied as above.
-- [x] 2.5 Add `Toolbox::reply_toolcall_permission(call_id, data: serde_json::Value) -> Result<(), MorayError>` that pops the sender from the pending map, calls `policy.reply(call_id, data).await` to decode the payload into a boolean, then resolves the `oneshot` with that boolean. Unknown `call_id` returns an error without consulting the policy.
-- [x] 2.6 `TOOL_CALL_DENIED_BY_USER` stays in toolbox module; re-export from `moray_core` unchanged.
+- [x] 2.5 Add `Toolbox::reply_toolcall_permission(call_id, data: serde_json::Value) -> Result<(), NovaError>` that pops the sender from the pending map, calls `policy.reply(call_id, data).await` to decode the payload into a boolean, then resolves the `oneshot` with that boolean. Unknown `call_id` returns an error without consulting the policy.
+- [x] 2.6 `TOOL_CALL_DENIED_BY_USER` stays in toolbox module; re-export from `nova_core` unchanged.
 - [x] 2.7 Unit-test the toolbox with in-file `AskUserPolicy` + `StaticPolicy` covering: `Allow` path (`Requested → Started → Finished`); `Deny` path (`Requested → Finished{denied}`); `AskUser` allowed (`Requested → RequestingPermission → Started → Finished`); `AskUser` denied (`Requested → RequestingPermission → Finished{denied}`); tool error path always ends with `Finished`; `reply_toolcall_permission` unknown `call_id` error; `reply_toolcall_permission` delegates the payload to the policy's `reply`.
 
 ## 3. Session harness factory
@@ -53,8 +53,8 @@
 
 ## 8. Specs and validation
 
-- [x] 8.1 Apply `moray-core` spec deltas (this change set).
-- [x] 8.2 Apply `moray-demos` spec deltas (mostly unchanged surface).
+- [x] 8.1 Apply `nova-core` spec deltas (this change set).
+- [x] 8.2 Apply `nova-demos` spec deltas (mostly unchanged surface).
 - [x] 8.3 Run `openspec validate refactor-move-tool-auth-to-session --strict`.
 - [x] 8.4 Run `cargo build --workspace` and `cargo test --workspace` (offline); fix any breakage.
 - [x] 8.5 Smoke-test `cargo run -p demo --example chat` against a stub to confirm the interactive authorization flow still works end-to-end.

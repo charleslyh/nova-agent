@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use moray_core::{MorayError, ToolCallResponder, TypedTool};
+use nova_core::{NovaError, ToolCallResponder, TypedTool};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
@@ -34,11 +34,11 @@ impl TypedTool for FileReadTool {
         args: FileReadArgs,
         responder: &dyn ToolCallResponder,
         _cancellation: CancellationToken,
-    ) -> Result<(), MorayError> {
+    ) -> Result<(), NovaError> {
         let path = resolve_path(&self.cwd, &args.path);
         let content = tokio::fs::read_to_string(&path)
             .await
-            .map_err(|e| MorayError::Message(format!("file_read: failed to read file: {e}")))?;
+            .map_err(|e| NovaError::Message(format!("file_read: failed to read file: {e}")))?;
 
         let lines: Vec<&str> = content.lines().collect();
         if lines.is_empty() {

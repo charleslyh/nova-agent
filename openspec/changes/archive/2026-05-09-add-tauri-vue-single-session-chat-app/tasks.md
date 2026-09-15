@@ -1,9 +1,9 @@
-## 1. Builtin Package (moray-builtin)
+## 1. Builtin Package (nova-builtin)
 
 - [x] 1.1 Create `builtin/` Rust crate at the workspace root and add it to the root workspace `members`.
-- [x] 1.2 Move `JsonlTranscriptStore` (and its supporting types) from `demo/src/transcript.rs` to `moray-builtin::stores`; preserve public API and observable behavior.
-- [x] 1.3 Update `demo/` to consume `JsonlTranscriptStore` from `moray-builtin::stores`; remove the old in-`demo` copy.
-- [x] 1.4 Add `moray-builtin::tools::CalcTool` implementing a double-stack four-arithmetic calculator with operator precedence; input `{ "expression": String }`, output `{ "value": Number }` on success and `{ "error": String }` on failure.
+- [x] 1.2 Move `JsonlTranscriptStore` (and its supporting types) from `demo/src/transcript.rs` to `nova-builtin::stores`; preserve public API and observable behavior.
+- [x] 1.3 Update `demo/` to consume `JsonlTranscriptStore` from `nova-builtin::stores`; remove the old in-`demo` copy.
+- [x] 1.4 Add `nova-builtin::tools::CalcTool` implementing a double-stack four-arithmetic calculator with operator precedence; input `{ "expression": String }`, output `{ "value": Number }` on success and `{ "error": String }` on failure.
 - [x] 1.5 Wire `CalcTool` to surface `AuthDecision::AskUser` on every invocation so the desktop app exercises live authorization prompts.
 - [x] 1.6 Add focused unit tests for `CalcTool` (precedence, division by zero, parse errors).
 
@@ -11,21 +11,21 @@
 
 - [x] 2.1 Add `exclude = ["desktop"]` in the root `Cargo.toml`.
 - [x] 2.2 Create the `desktop/` directory as its own Cargo workspace with members `server` and `client/src-tauri`.
-- [x] 2.3 Wire `desktop/server` and `desktop/client/src-tauri` to reference `moray-core`, `moray-sessions`, and `moray-builtin` via `path` dependencies.
+- [x] 2.3 Wire `desktop/server` and `desktop/client/src-tauri` to reference `nova-core`, `nova-sessions`, and `nova-builtin` via `path` dependencies.
 - [x] 2.4 Initialize `desktop/web` as a pnpm package with Vue 3 + Vite + JavaScript (no TypeScript), no UI framework, and minimal config.
 - [x] 2.5 Wire `desktop/client/src-tauri`'s frontend dist path / dev server URL to `desktop/web`'s Vite output.
 - [x] 2.6 Document local development and verification commands for each of the four packages.
 
 ## 3. Server (desktop/server)
 
-- [x] 3.1 Add a `config` module that loads OpenAI completion credentials (`MORAY_OPENAI_API_KEY` / `MORAY_OPENAI_BASE_URL` / `MORAY_OPENAI_MODEL`) from env, with `ServerOptions` allowing programmatic override.
-- [x] 3.2 Build a session harness composing `moray_builtin::completions::OpenAIChatCompletion`, the `JsonlTranscriptStore` from `moray-builtin`, and a `Toolbox` carrying `CalcTool` from `moray-builtin`.
+- [x] 3.1 Add a `config` module that loads OpenAI completion credentials (`NOVA_OPENAI_API_KEY` / `NOVA_OPENAI_BASE_URL` / `NOVA_OPENAI_MODEL`) from env, with `ServerOptions` allowing programmatic override.
+- [x] 3.2 Build a session harness composing `nova_builtin::completions::OpenAIChatCompletion`, the `JsonlTranscriptStore` from `nova-builtin`, and a `Toolbox` carrying `CalcTool` from `nova-builtin`.
 - [x] 3.3 Compile `desktop/server` as a `lib` crate exporting `start(opts) -> ServerHandle` that binds `127.0.0.1:0`, builds the `axum` router, and spawns it on the current Tokio runtime.
 - [x] 3.4 Implement `ServerHandle` carrying `local_addr`, a `CancellationToken`, and a `JoinHandle<()>`, plus an async `shutdown()` that cancels and awaits.
 - [x] 3.5 Wire `axum::serve(...).with_graceful_shutdown(token.cancelled())` so shutdown drains in-flight requests.
-- [x] 3.6 Implement `POST /messages` to call `ChatSession::post` with the user input; map `MorayError::Busy → 409`.
+- [x] 3.6 Implement `POST /messages` to call `ChatSession::post` with the user input; map `NovaError::Busy → 409`.
 - [x] 3.7 Implement `POST /tool-authorizations/:call_id` to call `ChatSession::reply_toolcall_permission`; map unknown `call_id → 404`, no active turn → 409.
-- [x] 3.8 Implement `POST /reset` to call `ChatSession::reset`; map `MorayError::Busy → 409`.
+- [x] 3.8 Implement `POST /reset` to call `ChatSession::reset`; map `NovaError::Busy → 409`.
 - [x] 3.9 Implement `GET /events?from_seq=N` (SSE):
   - read `last_seq = store.current_last_seq()`;
   - subscribe `live = store.subscribe(last_seq + 1)` first;
@@ -60,6 +60,6 @@
 ## 6. Verification
 
 - [x] 6.1 Add focused tests around the HTTP endpoints and the `ChatClient` interface contract where practical.
-- [x] 6.2 Run `cargo build` / `cargo test` for the root workspace (now including `moray-builtin`) and for the independent `desktop/` workspace.
+- [x] 6.2 Run `cargo build` / `cargo test` for the root workspace (now including `nova-builtin`) and for the independent `desktop/` workspace.
 - [x] 6.3 Run the `desktop/web` build via pnpm to verify Vite output.
 - [x] 6.4 Run the documented end-to-end app verification command and fix any failures.

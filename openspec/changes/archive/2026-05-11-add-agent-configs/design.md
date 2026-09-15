@@ -1,13 +1,13 @@
 ## Context
 
-`desktop/server` 当前在启动时从 `~/.moray/server.toml` 解析一组 OpenAI-compatible completion 凭据与能力，并用这组配置构造单个 `ChatSession` 的 harness。`desktop/web` 通过 `ChatClient` 访问 HTTP/SSE API，UI 仍是单 active session 形态，title bar 只有 reset 操作，composer 只负责输入与发送。
+`desktop/server` 当前在启动时从 `~/.nova/server.toml` 解析一组 OpenAI-compatible completion 凭据与能力，并用这组配置构造单个 `ChatSession` 的 harness。`desktop/web` 通过 `ChatClient` 访问 HTTP/SSE API，UI 仍是单 active session 形态，title bar 只有 reset 操作，composer 只负责输入与发送。
 
-本变更把“agent”定义为桌面本地可管理的运行时配置集合。它不是 `moray-core::Agent` 的新公共类型，而是 `desktop/server` 配置域里的实体：一个 agent 通过 id/name 指向 completion 配置，并预留 tools、system prompt、context 等后续扩展位。session 绑定 agent 后，后续 turn 使用该 agent 的配置组装 harness。
+本变更把“agent”定义为桌面本地可管理的运行时配置集合。它不是 `nova-core::Agent` 的新公共类型，而是 `desktop/server` 配置域里的实体：一个 agent 通过 id/name 指向 completion 配置，并预留 tools、system prompt、context 等后续扩展位。session 绑定 agent 后，后续 turn 使用该 agent 的配置组装 harness。
 
 ## Goals / Non-Goals
 
 **Goals:**
-- 在 `~/.moray/server.toml` 中持久化多个 completions 和多个 agents。
+- 在 `~/.nova/server.toml` 中持久化多个 completions 和多个 agents。
 - 在独立 session 配置文件中持久化默认 agent 和 session-agent 绑定。
 - 提供 server HTTP API，让 web 可以读取 agents、查看当前 session agent、切换当前 session agent，并保存 agent 的 completion 选择。
 - 在 web title bar 提供 agents 设置入口，用 card 列出 agents，并在详情卡中用 dropdown 修改 agent 的 completion。
@@ -17,16 +17,16 @@
 **Non-Goals:**
 - 不在 web 中编辑 completion 的 api key/base URL/model 等详细字段；这些字段仍通过 `server.toml` 或后续专门配置能力维护。
 - 不引入多 session 列表/创建/删除 UI；当前 session id 仍可保持 `default`。
-- 不扩展 `moray-core::Agent`、`moray_sessions::ChatSession` 的公共 trait 边界来表达 desktop agent 配置。
+- 不扩展 `nova-core::Agent`、`nova_sessions::ChatSession` 的公共 trait 边界来表达 desktop agent 配置。
 - 不实现云同步、账号级配置、远程共享 agent 或 public HTTP server 安全模型。
 - 不在本变更中实现复杂 tools 配置 UI；agent schema 仅预留 tools 字段，server 初期仍可使用默认工具集合。
 
 ## Decisions
 
 - Decision: `AgentConfig` 是 desktop server 的配置实体，不是 core runtime 类型。
-  - Rationale: `moray-core` 已通过 trait object 支持运行时选择 completion/toolbox；desktop agent 只是应用层的配置组合，不应让核心 crate 承担桌面配置 schema。
+  - Rationale: `nova-core` 已通过 trait object 支持运行时选择 completion/toolbox；desktop agent 只是应用层的配置组合，不应让核心 crate 承担桌面配置 schema。
   - Alternatives considered:
-    - 在 `moray-core` 新增 `AgentConfig`：拒绝，因为会把 UI/磁盘配置概念泄漏进可复用 runtime。
+    - 在 `nova-core` 新增 `AgentConfig`：拒绝，因为会把 UI/磁盘配置概念泄漏进可复用 runtime。
     - 在 web 本地保存 agent：拒绝，因为后续对话由 server 执行，server 必须是绑定关系的权威来源。
 
 - Decision: `server.toml` 只保存 agent 与 completion 配置，session-agent 绑定保存到独立 session 配置文件。
@@ -49,7 +49,7 @@
     completion_id = "a1b2c3d4"
     tools = ["builtin"]
     ```
-  - Session config proposed shape (`~/.moray/sessions.toml`):
+  - Session config proposed shape (`~/.nova/sessions.toml`):
     ```toml
 
     [sessions]
@@ -64,10 +64,10 @@
     - 把 session-agent binding 写入 transcript：拒绝，因为绑定关系是 session 配置，不是会话事件历史。
 
 
-- Decision: completion 的 `api_key` 可省略，省略时默认读取 `MORAY_OPENAI_API_KEY`；对省略与 `env:` 形式的密钥采用**实时解析**。
+- Decision: completion 的 `api_key` 可省略，省略时默认读取 `NOVA_OPENAI_API_KEY`；对省略与 `env:` 形式的密钥采用**实时解析**。
   - Rationale: 大多数本地开发和桌面启动场景都会通过环境变量提供 API key。让 `api_key` 可选可以减少 `server.toml` 样板，也避免鼓励用户把密钥写入配置文件；需要多 key 或非默认环境变量时仍可显式写 `api_key = "env:<NAME>"`，也可写字面量。实时解析指在每次为某次 turn 构造 `OpenAIChatCompletion`（或等价适配器）时再读取环境变量，而不是在加载 `server.toml` 时把 key 固定成进程启动瞬间的快照；这样在长驻 server 进程中修改 export、或启动时尚未设置变量但在首次发消息前已设置时，行为更直观。字面量 `api_key` 仍可在加载阶段校验非空，无需每次读盘外状态。
   - Alternatives considered:
-    - 要求每个 completion 都显式写 `api_key = "env:MORAY_OPENAI_API_KEY"`：拒绝，因为这是高频默认值，增加重复配置。
+    - 要求每个 completion 都显式写 `api_key = "env:NOVA_OPENAI_API_KEY"`：拒绝，因为这是高频默认值，增加重复配置。
     - 只允许环境变量不允许字面量：拒绝，因为本地测试和特殊部署可能需要明确的字面量配置。
     - 仅在 config load 时解析 `env:`：拒绝，与本决策的实时解析语义不一致。
 
@@ -96,7 +96,7 @@
     - 只在 web 内暂存选择直到下一次发送：拒绝，因为刷新或重启会丢失绑定，且 server 不知道 session 的真实配置。
 
 - Decision: 用 session-aware config resolver 解析运行时配置。
-  - Rationale: 最简单的 server 侧实现是让统一 config 类型同时加载 agent/completion 配置和独立 session 配置，并提供按 `session_id` 解析的 API：`session_id -> agent_id -> AgentConfig -> completion_id -> CompletionConfig`。创建 `ServerHarness` 时传入 `session_id` 和共享 config store/resolver，harness 需要 completion 时通过 `session_id` 联动找到当前 agent 与 completion。这样无需把 session-agent 逻辑下沉到 `moray-core`，也避免在 UI 或 transcript 中复制绑定状态。
+  - Rationale: 最简单的 server 侧实现是让统一 config 类型同时加载 agent/completion 配置和独立 session 配置，并提供按 `session_id` 解析的 API：`session_id -> agent_id -> AgentConfig -> completion_id -> CompletionConfig`。创建 `ServerHarness` 时传入 `session_id` 和共享 config store/resolver，harness 需要 completion 时通过 `session_id` 联动找到当前 agent 与 completion。这样无需把 session-agent 逻辑下沉到 `nova-core`，也避免在 UI 或 transcript 中复制绑定状态。
   - Implementation note: 当前 `ChatSession::post` 每次 post 都会调用 harness 创建 completion/toolbox，因此不需要为了 agent switch 重建 `ChatSession`。如果未来 session runtime 改为在创建时固定 completion/toolbox，再重新评估是否需要 idle-only switch 或 session 重建。
   - Alternatives considered:
     - 切换 agent 时强制 reset：拒绝，因为这会把“换配置”变成“丢上下文”。

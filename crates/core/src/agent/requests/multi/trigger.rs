@@ -7,11 +7,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::agent::requests::multi::harness::AgentHarnessFactory;
-use crate::agent::requests::multi::sink::{CollectingAgentEventSink, AgentRole, MultiAgentEventSink};
+use crate::agent::requests::multi::sink::{
+    AgentRole, CollectingAgentEventSink, MultiAgentEventSink,
+};
 use crate::agent::requests::single::AgentRequestBuilder;
 use crate::{
-    ChatCompletionRequestMessage, ContextEngine, MorayError, Tool, ToolCallResponder,
-    ToolManifest, Toolbox,
+    ChatCompletionRequestMessage, ContextEngine, NovaError, Tool, ToolCallResponder, ToolManifest,
+    Toolbox,
 };
 
 pub const RUN_SUB_AGENT_TOOL_NAME: &str = "agent";
@@ -108,10 +110,9 @@ impl Tool for RunSubAgentTool {
         args: Value,
         responder: &dyn ToolCallResponder,
         _cancellation: CancellationToken,
-    ) -> std::result::Result<(), MorayError> {
-        let args: RunSubAgentArgs = serde_json::from_value(args).map_err(|e| {
-            MorayError::Message(format!("invalid run_sub_agent arguments: {e}"))
-        })?;
+    ) -> std::result::Result<(), NovaError> {
+        let args: RunSubAgentArgs = serde_json::from_value(args)
+            .map_err(|e| NovaError::Message(format!("invalid run_sub_agent arguments: {e}")))?;
         self.run_inner(call_id, args, responder).await
     }
 }
@@ -122,7 +123,7 @@ impl RunSubAgentTool {
         call_id: &str,
         args: RunSubAgentArgs,
         responder: &dyn ToolCallResponder,
-    ) -> std::result::Result<(), MorayError> {
+    ) -> std::result::Result<(), NovaError> {
         let agent_id = args.agent_id.as_str();
         let entry = self
             .sub_agents
@@ -135,7 +136,7 @@ impl RunSubAgentTool {
                     .map(|e| e.agent_id.as_str())
                     .collect::<Vec<_>>()
                     .join(", ");
-                MorayError::Message(format!(
+                NovaError::Message(format!(
                     "unknown sub-agent id `{agent_id}` for this session; available: [{available}]"
                 ))
             })?;
@@ -154,7 +155,7 @@ impl RunSubAgentTool {
             SubAgentContextMode::Isolated => vec![task_message],
             SubAgentContextMode::Branch => {
                 let mut msgs = self.leader_context.snapshot().ok_or_else(|| {
-                    MorayError::Message(
+                    NovaError::Message(
                         "branch context requires leader context snapshot support".into(),
                     )
                 })?;
@@ -163,9 +164,7 @@ impl RunSubAgentTool {
             }
         };
 
-        let sub_context = self
-            .factory
-            .create_context(agent_id, messages)?;
+        let sub_context = self.factory.create_context(agent_id, messages)?;
 
         let completion = self.factory.create_completion(agent_id)?;
 
@@ -198,7 +197,7 @@ impl RunSubAgentTool {
             Ok(Ok(())) => {}
             Ok(Err(err)) => return Err(err),
             Err(join_err) => {
-                return Err(MorayError::Message(format!(
+                return Err(NovaError::Message(format!(
                     "agent run task failed: {join_err}"
                 )))
             }
@@ -217,7 +216,7 @@ impl RunSubAgentTool {
 pub(crate) fn resolve_context_mode(
     override_mode: Option<&str>,
     default_mode: SubAgentContextMode,
-) -> std::result::Result<SubAgentContextMode, MorayError> {
+) -> std::result::Result<SubAgentContextMode, NovaError> {
     if let Some(raw) = override_mode {
         return match raw.trim().to_ascii_lowercase().as_str() {
             "isolated" => Ok(SubAgentContextMode::Isolated),

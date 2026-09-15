@@ -2,7 +2,7 @@
 
 Authorization currently lives in **`Agent`**: the agent batches `ToolCallRequest`s between the completion `Done` chunk and execution, emits **`AssistantToolCallAuthorizationRequired`** per call, owns a **`HashMap<call_id, oneshot::Sender<bool>>`**, and exposes **`Agent::reply_tool_auth`** so **`Session`** can forward user decisions. This couples UI/policy concerns to the ReAct loop and makes the agent's replay/recovery story more complex than it needs to be (`replay.rs` inspects auth-gate events to reconstruct `awaiting_tools`).
 
-The refactor targets four outcomes: (1) remove auth state from the agent; (2) make the **`Toolbox`** the single integration point with the authorization policy — so the rest of `moray-core` (agent + session) is auth-trait-agnostic — *and* the sole owner of pending-authorization state; (3) preserve the existing ordering semantics of tool-call lifecycle (`ToolCallStarted` = authorization passed, tool execution actually started); and (4) eliminate the previously-required callback / mpsc fan-in plumbing inside the session.
+The refactor targets four outcomes: (1) remove auth state from the agent; (2) make the **`Toolbox`** the single integration point with the authorization policy — so the rest of `nova-core` (agent + session) is auth-trait-agnostic — *and* the sole owner of pending-authorization state; (3) preserve the existing ordering semantics of tool-call lifecycle (`ToolCallStarted` = authorization passed, tool execution actually started); and (4) eliminate the previously-required callback / mpsc fan-in plumbing inside the session.
 
 ## Goals / Non-Goals
 
@@ -62,8 +62,8 @@ The refactor targets four outcomes: (1) remove auth state from the agent; (2) ma
   ```
 - **Why two methods, with the channel still in the toolbox:** `decide` answers *whether* a tool call needs user input; `reply` answers *how the user's raw payload maps onto a final allow/deny* (and lets the policy persist that mapping). The name is short because the type (`ToolCallAuthPolicy`) already implies the domain — `policy.reply(call_id, data)` reads unambiguously as "the policy's reply handler for this call". Pending-request state (the `oneshot` channel keyed by `call_id`) still belongs exclusively to the toolbox, which already knows the `call_id`, is the unique point where `RequestingPermission` is emitted, and is the waiter that needs to be unblocked. The policy never sees the `oneshot`; it only sees the decoded payload.
 - **Why three `AuthDecision` variants instead of `bool`:** `Allow` / `Deny` are auto-decisions (no prompt); `AskUser { data }` explicitly requests user involvement and carries an optional payload forwarded to the UI. The toolbox can unambiguously decide whether to emit `RequestingPermission`.
-- **Why `AuthDecision::AskUser` is `PartialEq`, not `Eq`:** `Value` is only `PartialEq`; the enum degrades accordingly. Callers comparing decisions in tests (none exist in `moray-core`) use `matches!` or `==` via `PartialEq`.
-- **`moray-core` ships no concrete implementation.** Demo/tests/production each provide their own (e.g. `AlwaysAskPolicy` for interactive — interprets `Value::Bool` replies, `PredicatePolicy` for tests, a future `CachedPolicy`, etc.).
+- **Why `AuthDecision::AskUser` is `PartialEq`, not `Eq`:** `Value` is only `PartialEq`; the enum degrades accordingly. Callers comparing decisions in tests (none exist in `nova-core`) use `matches!` or `==` via `PartialEq`.
+- **`nova-core` ships no concrete implementation.** Demo/tests/production each provide their own (e.g. `AlwaysAskPolicy` for interactive — interprets `Value::Bool` replies, `PredicatePolicy` for tests, a future `CachedPolicy`, etc.).
 
 ### Decision 2: `Toolbox` owns both the policy and the pending-authorization state
 
@@ -115,7 +115,7 @@ The refactor targets four outcomes: (1) remove auth state from the agent; (2) ma
           &self,
           call_id: &str,
           data: serde_json::Value,
-      ) -> Result<(), MorayError>;
+      ) -> Result<(), NovaError>;
   }
   ```
 - **Semantics:**
@@ -138,7 +138,7 @@ The refactor targets four outcomes: (1) remove auth state from the agent; (2) ma
   yield Started { call_id };
   yield Finished { call_id, content: <Tool::call output or error string> };
   ```
-  `Toolbox::reply_toolcall_permission(call_id, data)` pops the sender from `pending_auth`, calls `self.policy.reply(call_id, data).await` to convert the payload into a boolean, and then forwards that boolean on the `oneshot`. Unknown `call_id`s return `MorayError::Message` without consulting the policy.
+  `Toolbox::reply_toolcall_permission(call_id, data)` pops the sender from `pending_auth`, calls `self.policy.reply(call_id, data).await` to convert the payload into a boolean, and then forwards that boolean on the `oneshot`. Unknown `call_id`s return `NovaError::Message` without consulting the policy.
 - **Why this lives in toolbox, not agent or session:** the toolbox is the only layer that already knows the policy trait, the tool registry, the `call_id`, and the result shape. Co-locating the `oneshot` map with the conditional `RequestingPermission` emission removes cross-component coordination: there is no way to construct a channel without the toolbox also emitting the event, and there is no way to resolve it without the toolbox also running the policy's reply hook.
 
 ### Decision 3: Agent forwards lifecycle events verbatim, with **concurrent batch execution**
@@ -224,6 +224,6 @@ Because there is no external compatibility to preserve, the migration is a singl
 4. Rewrite `Session::new` to take `SessionHarnessFactory` (now just `create_toolbox` + `create_completion`); collapse `Session::wrap_stream` to a pure passthrough that wraps every agent event as `AgentEvent { event }` (no variant promotion — authorization requests stay nested inside `AgentEvent(ToolCall { event: RequestingPermission { .. } })`). `Session::reply_toolcall_permission(call_id, data)` delegates to `self.toolbox.reply_toolcall_permission(...)`.
 5. Split `replay.rs` into session-level and agent-level helpers; remove auth-gate inspection. Track pending authorizations by matching `ToolboxEvent::RequestingPermission` (not `Requested`).
 6. Update demo (`demo/src/policies.rs` ships `AlwaysAskPolicy` + `PredicatePolicy` + `allow_all_policy` implementing both policy methods — `AlwaysAskPolicy::reply` decodes `Value::Bool`, the others defensively deny; `DemoHarness::create_toolbox` builds the policy-embedded toolbox internally; `chat.rs` and `chat_view.rs` prompt for authorization by destructuring `SessionEventKind::AgentEvent { event: AgentRunResponseMessage::ToolCall { event: ToolboxEvent::RequestingPermission { call_id, .. } } }` and reply with `Session::reply_toolcall_permission(&call_id, Value::Bool(allowed))`).
-7. Update `moray-core` and `moray-demos` specs; run `openspec validate --strict` and `cargo test --workspace`.
+7. Update `nova-core` and `nova-demos` specs; run `openspec validate --strict` and `cargo test --workspace`.
 
 **Rollback:** revert the PR. No downstream depends on the old API.

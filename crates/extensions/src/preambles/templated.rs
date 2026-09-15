@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 
-use moray_core::{ChatCompletionRequestMessage, MorayError, ToolManifest};
+use nova_core::{ChatCompletionRequestMessage, NovaError, ToolManifest};
 
 use crate::context::PreambleProvider;
 use crate::preambles::PreambleSection;
@@ -56,8 +56,7 @@ impl TemplatedPreamblerBuilder {
     where
         F: FnMut() -> String + Send + 'static,
     {
-        self.subs_dyn
-            .insert(key.into(), Mutex::new(Box::new(f)));
+        self.subs_dyn.insert(key.into(), Mutex::new(Box::new(f)));
         self
     }
 
@@ -122,10 +121,7 @@ impl TemplatedPreambler {
     }
 
     fn strip_unreplaced_placeholders(preamble: &mut String) {
-        loop {
-            let Some(start) = preamble.find("{{") else {
-                break;
-            };
+        while let Some(start) = preamble.find("{{") {
             let after = start + 2;
             let Some(end_rel) = preamble[after..].find("}}") else {
                 break;
@@ -141,7 +137,7 @@ impl PreambleProvider for TemplatedPreambler {
         &self,
         _transcript: &[ChatCompletionRequestMessage],
         _tools: &[ToolManifest],
-    ) -> Result<String, MorayError> {
+    ) -> Result<String, NovaError> {
         Ok(self.render())
     }
 }
@@ -291,7 +287,7 @@ mod tests {
         let text = rendered(
             &TemplatedPreamblerBuilder::new()
                 .template(TEST_TEMPLATE)
-                .subst_dyn("character", || String::new())
+                .subst_dyn("character", String::new)
                 .build(),
         );
         assert!(text.contains("## Character"));
@@ -333,7 +329,9 @@ mod tests {
         let current_in_fn = current.clone();
         let provider = TemplatedPreamblerBuilder::new()
             .template(TEST_TEMPLATE)
-            .subst_dyn("character", move || current_in_fn.read().expect("lock").clone())
+            .subst_dyn("character", move || {
+                current_in_fn.read().expect("lock").clone()
+            })
             .build();
         let first = provider.generate(&[], &[]).expect("generate 1");
         *current.write().expect("lock") = "v2".into();
