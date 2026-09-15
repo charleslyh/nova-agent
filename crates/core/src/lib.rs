@@ -4,6 +4,7 @@
 mod agent;
 mod completion;
 mod context;
+mod tool_context;
 mod toolbox;
 mod types;
 
@@ -18,6 +19,7 @@ pub use completion::{
     ChatCompletionResponseChunk, ChatCompletionUsage,
 };
 pub use context::ContextEngine;
+pub use tool_context::ToolContext;
 pub use toolbox::{
     Tool, ToolCallEvent, ToolCallEventKind, ToolCallEventSink, ToolCallGroupId,
     ToolCallInterceptor, ToolCallResponder, Toolbox, ToolboxBuilder, ToolboxError, TypedTool,

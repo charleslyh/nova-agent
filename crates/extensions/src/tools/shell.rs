@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 
 use async_trait::async_trait;
-use nova_core::{NovaError, ToolCallResponder, TypedTool};
+use nova_core::{NovaError, ToolCallResponder, ToolContext, TypedTool};
 
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
@@ -42,6 +42,7 @@ impl TypedTool for ShellTool {
         &self,
         args: ShellArgs,
         responder: &dyn ToolCallResponder,
+        _context: &ToolContext,
         _cancellation: CancellationToken,
     ) -> Result<(), NovaError> {
         let command = args.command.trim();

@@ -12,8 +12,8 @@ use crate::agent::requests::multi::sink::{
 };
 use crate::agent::requests::single::AgentRequestBuilder;
 use crate::{
-    ChatCompletionRequestMessage, ContextEngine, NovaError, Tool, ToolCallResponder, ToolManifest,
-    Toolbox,
+    ChatCompletionRequestMessage, ContextEngine, NovaError, Tool, ToolCallResponder, ToolContext,
+    ToolManifest, Toolbox,
 };
 
 pub const RUN_SUB_AGENT_TOOL_NAME: &str = "agent";
@@ -109,6 +109,7 @@ impl Tool for RunSubAgentTool {
         call_id: &str,
         args: Value,
         responder: &dyn ToolCallResponder,
+        _context: &ToolContext,
         _cancellation: CancellationToken,
     ) -> std::result::Result<(), NovaError> {
         let args: RunSubAgentArgs = serde_json::from_value(args)

@@ -19,6 +19,7 @@ use tracing::{info, warn, Instrument};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::tool_context::ToolContext;
 use crate::types::{NovaError, ToolCallRequest, ToolCallResult, ToolCallStatus, ToolManifest};
 
 // ---------------------------------------------------------------------------
@@ -155,6 +156,7 @@ pub trait Tool: Send + Sync {
         call_id: &str,
         args: Value,
         responder: &dyn ToolCallResponder,
+        context: &ToolContext,
         cancellation: CancellationToken,
     ) -> Result<(), NovaError>;
 }
@@ -176,6 +178,7 @@ pub trait TypedTool: Send + Sync {
         &self,
         args: Self::Args,
         responder: &dyn ToolCallResponder,
+        context: &ToolContext,
         cancellation: CancellationToken,
     ) -> Result<(), NovaError>;
 }
@@ -194,6 +197,7 @@ where
         _call_id: &str,
         args: Value,
         responder: &dyn ToolCallResponder,
+        context: &ToolContext,
         cancellation: CancellationToken,
     ) -> Result<(), NovaError> {
         let tool_name = T::NAME;
@@ -205,7 +209,7 @@ where
         let args = serde_json::from_value(args)
             .map_err(|e| NovaError::Message(format!("{tool_name}: invalid JSON arguments: {e}")))?;
         let result = self
-            .run(args, responder, cancellation)
+            .run(args, responder, context, cancellation)
             .await
             .map_err(|e| NovaError::Message(format!("{tool_name}: {e}")));
         tracing::info!("[tool] {} result={:?}", tool_name, result);
@@ -422,15 +426,21 @@ impl ToolCallResponder for ToolCallTracker {
 /// Concurrent batch of tool calls: shared event sink, per-call trackers, join-set execution.
 struct ToolCallGroup {
     cancellation: CancellationToken,
+    context: ToolContext,
     join_set: JoinSet<()>,
     sink: Arc<dyn ToolCallEventSink>,
     tool_calls: Vec<Arc<ToolCallTracker>>,
 }
 
 impl ToolCallGroup {
-    fn new(sink: Arc<dyn ToolCallEventSink>, cancellation: CancellationToken) -> Self {
+    fn new(
+        sink: Arc<dyn ToolCallEventSink>,
+        context: ToolContext,
+        cancellation: CancellationToken,
+    ) -> Self {
         Self {
             cancellation,
+            context,
             join_set: JoinSet::new(),
             sink,
             tool_calls: Vec::new(),
@@ -447,8 +457,11 @@ impl ToolCallGroup {
         let tracker = Arc::new(ToolCallTracker::new(request, self.sink.clone()));
         self.tool_calls.push(tracker.clone());
         let cancellation = self.cancellation.clone();
-        self.join_set
-            .spawn(run_call(tool, interceptors, manifest, tracker, cancellation).in_current_span());
+        let context = self.context.clone();
+        self.join_set.spawn(
+            run_call(tool, interceptors, manifest, tracker, context, cancellation)
+                .in_current_span(),
+        );
     }
 
     async fn join(mut self) -> (Vec<ToolCallRequest>, Vec<ToolCallResult>) {
@@ -491,6 +504,7 @@ async fn run_call(
     interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
     manifest: Option<ToolManifest>,
     tracker: Arc<ToolCallTracker>,
+    context: ToolContext,
     cancellation: CancellationToken,
 ) {
     if cancellation.is_cancelled() {
@@ -602,7 +616,13 @@ async fn run_call(
     // downstream consumers (frontend, session log) mark it correctly.
     let cancel_check = cancellation.clone();
     let status = match tool
-        .call(&call_id, request.arguments, tracker.as_ref(), cancellation)
+        .call(
+            &call_id,
+            request.arguments,
+            tracker.as_ref(),
+            &context,
+            cancellation,
+        )
         .await
     {
         Ok(()) => {
@@ -642,6 +662,8 @@ pub struct Toolbox {
     tools: Arc<HashMap<String, Arc<dyn Tool>>>,
     manifests: Vec<ToolManifest>,
     interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
+    /// Shared context passed to every tool call made through this toolbox.
+    context: ToolContext,
     groups: Arc<Mutex<HashMap<ToolCallGroupId, ToolCallGroup>>>,
     next_group_id: Arc<AtomicU64>,
 }
@@ -651,6 +673,7 @@ pub struct ToolboxBuilder {
     tools: HashMap<String, Arc<dyn Tool>>,
     manifests: Vec<ToolManifest>,
     interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
+    context: ToolContext,
 }
 
 impl ToolboxBuilder {
@@ -659,6 +682,7 @@ impl ToolboxBuilder {
             tools: HashMap::new(),
             manifests: Vec::new(),
             interceptors: Vec::new(),
+            context: ToolContext::new(),
         }
     }
 
@@ -680,8 +704,15 @@ impl ToolboxBuilder {
         self
     }
 
+    /// Injects a shared context that will be passed to every tool call made
+    /// through the built toolbox. When omitted, an empty context is used.
+    pub fn context(mut self, context: ToolContext) -> Self {
+        self.context = context;
+        self
+    }
+
     pub fn build(self) -> Toolbox {
-        Toolbox::new(self.tools, self.manifests, self.interceptors)
+        Toolbox::new(self.tools, self.manifests, self.interceptors, self.context)
     }
 }
 
@@ -690,14 +721,22 @@ impl Toolbox {
         tools: HashMap<String, Arc<dyn Tool>>,
         manifests: Vec<ToolManifest>,
         interceptors: Vec<Arc<dyn ToolCallInterceptor>>,
+        context: ToolContext,
     ) -> Self {
         Self {
             tools: Arc::new(tools),
             manifests,
             interceptors,
+            context,
             groups: Arc::new(Mutex::new(HashMap::new())),
             next_group_id: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Returns the shared tool context passed to every tool call made through
+    /// this toolbox.
+    pub fn context(&self) -> &ToolContext {
+        &self.context
     }
 
     /// Merges `manifests` and `tools` into this toolbox in place.
@@ -725,10 +764,10 @@ impl Toolbox {
     ) -> ToolCallGroupId {
         let id = self.next_group_id.fetch_add(1, Ordering::Relaxed);
         let group_cancellation = turn_cancellation.child_token();
-        self.groups
-            .lock()
-            .await
-            .insert(id, ToolCallGroup::new(sink, group_cancellation));
+        self.groups.lock().await.insert(
+            id,
+            ToolCallGroup::new(sink, self.context.clone(), group_cancellation),
+        );
         id
     }
 
@@ -938,6 +977,7 @@ mod tests {
             &self,
             args: Value,
             responder: &dyn ToolCallResponder,
+            _context: &ToolContext,
             _cancellation: CancellationToken,
         ) -> Result<(), NovaError> {
             responder
@@ -961,6 +1001,7 @@ mod tests {
             &self,
             _: Value,
             _responder: &dyn ToolCallResponder,
+            _context: &ToolContext,
             _cancellation: CancellationToken,
         ) -> Result<(), NovaError> {
             std::future::pending::<()>().await;
@@ -979,6 +1020,7 @@ mod tests {
             &self,
             _: Value,
             _responder: &dyn ToolCallResponder,
+            _context: &ToolContext,
             _cancellation: CancellationToken,
         ) -> Result<(), NovaError> {
             Err(NovaError::Message("boom".into()))

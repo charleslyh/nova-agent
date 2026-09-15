@@ -10,6 +10,7 @@ use crate::completion::ChatCompletion;
 use crate::context::ContextEngine;
 use crate::toolbox::Toolbox;
 use crate::types::NovaError;
+use crate::ToolContext;
 
 const DEFAULT_MAX_ROUNDS: usize = 10;
 
@@ -117,5 +118,6 @@ fn empty_toolbox() -> Arc<Toolbox> {
         std::collections::HashMap::new(),
         Vec::new(),
         Vec::new(),
+        ToolContext::new(),
     ))
 }

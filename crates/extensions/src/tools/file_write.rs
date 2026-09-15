@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use nova_core::{NovaError, ToolCallResponder, TypedTool};
+use nova_core::{NovaError, ToolCallResponder, ToolContext, TypedTool};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
@@ -32,6 +32,7 @@ impl TypedTool for FileWriteTool {
         &self,
         args: FileWriteArgs,
         responder: &dyn ToolCallResponder,
+        _context: &ToolContext,
         _cancellation: CancellationToken,
     ) -> Result<(), NovaError> {
         let path = resolve_path(&self.cwd, &args.path);
